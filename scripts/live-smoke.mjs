@@ -10,7 +10,7 @@
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import playwright from 'playwright';
-import { anonKey, clearDeepseekBacklog, rpc } from './lib.mjs';
+import { anonKey, clearDeepseekBacklog, env, rpc, serviceRoleKey } from './lib.mjs';
 
 const args = process.argv.slice(2);
 const flagValue = (name, fallback) => {
@@ -144,6 +144,47 @@ try {
   // question is whether a visitor can see or reach it — not whether it is in the markup.
   const credVisible = await page.isVisible('#cred-input');
   check('the credential box is not reachable on the public page', !credVisible, { credVisible });
+
+  // 6. the operator flow on the DEPLOYED page: paste one string → parsed → stored.
+  // Runs last, and restores the live credential straight afterwards.
+  await page.goto(`${BASE}/?admin=1`, { waitUntil: 'load' });
+  await page.waitForSelector('.tab[data-view="admin"]:not([hidden])', { timeout: 15_000 }).catch(() => {});
+  await page.click('.tab[data-view="admin"]');
+  await page.waitForSelector('#cred-input', { state: 'visible', timeout: 15_000 });
+  check('?admin=1 reveals the backend on the deployed site', await page.isVisible('#cred-input'));
+
+  const pasted = 'z'.repeat(64);
+  const snapshot = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  await page.fill('#admin-token', env.TOOLS_ADMIN_TOKEN || '');
+  await page.fill('#cred-input', pasted);
+  await page.click('#cred-save');
+  await page
+    .waitForFunction(() => /已保存/.test(document.getElementById('cred-preview')?.textContent || ''), null, { timeout: 25_000 })
+    .catch(() => {});
+  const preview = (await page.textContent('#cred-preview')) || '';
+  const credError = (await page.textContent('#cred-error')) || '';
+  check('pasting one string on the deployed backend page stores it', /已保存/.test(preview), { preview, credError });
+  const canonical = await page.inputValue('#cred-canonical');
+  check('the reusable string is handed back by the deployed page', canonical.startsWith('dscred1:'), canonical.slice(0, 32));
+  const stored = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  check('the deployed relay will use the pasted token', stored.body?.token === pasted, stored.body?.token?.slice(0, 8));
+
+  if (snapshot.body?.token) {
+    await rpc(
+      'deepseek_credential_set',
+      {
+        p_token: snapshot.body.token,
+        p_device_id: snapshot.body.device_id,
+        p_cookie: snapshot.body.cookie,
+        p_user_agent: snapshot.body.user_agent,
+        p_source: snapshot.body.source,
+        p_note: 'restored by live-smoke',
+      },
+      { key: serviceRoleKey() },
+    );
+    const restored = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+    check('the live credential is restored after the run', restored.body?.token === snapshot.body.token, restored.body?.token?.slice(0, 8));
+  }
 } finally {
   await browser.close();
 }
