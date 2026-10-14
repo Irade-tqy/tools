@@ -5,7 +5,7 @@
 //
 //   node scripts/db-test.mjs
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { anonKey, connectDb, drainDeepseekQueue, env, projectRef, rpc, supabaseUrl } from './lib.mjs';
+import { anonKey, connectDb, drainDeepseekQueue, env, projectRef, rpc, serviceRoleKey, supabaseUrl } from './lib.mjs';
 
 // Mirrors src/lib/crypto.ts (WebCrypto AES-GCM + PBKDF2-SHA256/150000). WebCrypto
 // appends the 16-byte GCM tag to the ciphertext, so the tag is concatenated here too.
@@ -244,20 +244,71 @@ async function main() {
   check('repeated wrong passwords hit the rate limit', limited && limited.attempt <= 12, limited || 'never rate limited');
   await db.query('delete from public.clipboard_attempt');
 
+  // ---- deepseek credential store -------------------------------------------
+  // These checks overwrite the live credential, so snapshot it first and put it back in the
+  // finally block — running the test suite must not log the relay out of DeepSeek.
+  const snapshot = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  const shortToken = 'x'.repeat(64);
+  r = await rpc('deepseek_credential_set', { p_token: shortToken, p_device_id: 'dev-1', p_source: 'test' }, { key: serviceRoleKey() });
+  check('service role can store a credential', r.body?.ok === true && !!r.body?.updated_at, r.body);
+
+  r = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  check('service role reads the token back', r.body?.ok === true && r.body?.token === shortToken && r.body?.device_id === 'dev-1', r.body?.token);
+
+  r = await rpc('deepseek_credential_status', {});
+  check('anon sees a status without the token', r.body?.ok === true && r.body?.configured === true && !JSON.stringify(r.body).includes(shortToken), r.body);
+  check('the status reports age and source without leaking the secret', typeof r.body?.age_minutes === 'number' && r.body?.source === 'test', r.body);
+
+  r = await rpc('deepseek_credential_get', {});
+  check('anon cannot read the token', r.status === 401 || r.status === 403, `${r.status} ${r.body}`);
+  r = await rpc('deepseek_credential_set', { p_token: shortToken });
+  check('anon cannot store a credential', r.status === 401 || r.status === 403, `${r.status} ${r.body}`);
+  r = await rpc('deepseek_credential_report', { p_ok: false, p_error: 'token rejected upstream' }, { key: serviceRoleKey() });
+  check('the relay can report a credential failure', r.body?.ok === true, r.body);
+  r = await rpc('deepseek_credential_status', {});
+  check('a reported failure is visible to the UI', r.body?.last_error === 'token rejected upstream', r.body);
+  r = await rpc('deepseek_credential_set', { p_token: 'short' }, { key: serviceRoleKey() });
+  check('a too-short token is refused', r.body?.ok === false && r.body?.error === 'bad_token', r.body);
+  r = await rpc('deepseek_credential_report', { p_ok: true }, { key: serviceRoleKey() });
+  r = await rpc('deepseek_credential_status', {});
+  check('a success clears the error and stamps last_ok_at', !r.body?.last_error && !!r.body?.last_ok_at, r.body);
+
+  if (snapshot.body?.ok && snapshot.body.token) {
+    await rpc(
+      'deepseek_credential_set',
+      {
+        p_token: snapshot.body.token,
+        p_device_id: snapshot.body.device_id,
+        p_cookie: snapshot.body.cookie,
+        p_user_agent: snapshot.body.user_agent,
+        p_source: snapshot.body.source,
+        p_note: 'restored by db-test',
+      },
+      { key: serviceRoleKey() },
+    );
+    const restored = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+    check('the live credential is restored after the test', restored.body?.token === snapshot.body.token, restored.body?.token);
+  } else {
+    check('no credential was configured before the test (nothing to restore)', true, snapshot.body);
+  }
+
   // ---- deepseek relay -------------------------------------------------------
-  r = await rpc('deepseek_enqueue', { p_messages: [{ role: 'user', content: 'ping' }] });
+  r = await rpc('deepseek_ask', { p_prompt: 'ping' });
   const jobId = r.body?.job_id;
-  check('enqueue accepts a conversation', r.body?.ok === true && !!jobId, r.body);
+  check('ask queues a turn', r.body?.ok === true && !!jobId, r.body);
 
-  r = await rpc('deepseek_enqueue', { p_messages: [{ role: 'hacker', content: 'x' }] });
-  check('bad role is refused', r.body?.ok === false && r.body?.error === 'bad_message_shape', r.body);
+  r = await rpc('deepseek_ask', { p_prompt: '   ' });
+  check('an empty prompt is refused', r.body?.ok === false && r.body?.error === 'empty_prompt', r.body);
 
-  r = await rpc('deepseek_enqueue', { p_messages: [] });
-  check('empty conversation is refused', r.body?.ok === false && r.body?.error === 'bad_message_count', r.body);
+  r = await rpc('deepseek_ask', { p_prompt: 'x', p_model_type: 'gpt-4' });
+  check('an unknown model type is refused', r.body?.ok === false && r.body?.error === 'bad_model_type', r.body);
+
+  r = await rpc('deepseek_ask', { p_prompt: 'x'.repeat(40000) });
+  check('an oversized prompt is refused', r.body?.ok === false && r.body?.error === 'prompt_too_long', r.body);
 
   r = await rpc('deepseek_claim', { p_worker_id: 'test-worker' });
   check('worker claims the queued job', r.body?.ok === true && r.body?.claimed === true && r.body?.job_id === jobId, r.body);
-  check('claim hands over the messages', Array.isArray(r.body?.messages) && r.body.messages[0]?.content === 'ping', r.body);
+  check('claim hands over the prompt', r.body?.prompt === 'ping', r.body?.prompt);
 
   r = await rpc('deepseek_claim', { p_worker_id: 'test-worker-2' });
   check('an empty queue reports claimed=false', r.body?.ok === true && r.body?.claimed === false, r.body);
@@ -266,8 +317,8 @@ async function main() {
   check('claim requires a worker id', r.body?.ok === false && r.body?.error === 'missing_worker_id', r.body);
 
   // targeted claims: the edge function processes the job the UI just enqueued
-  const jobA = await rpc('deepseek_enqueue', { p_messages: [{ role: 'user', content: 'A' }] });
-  const jobB = await rpc('deepseek_enqueue', { p_messages: [{ role: 'user', content: 'B' }] });
+  const jobA = await rpc('deepseek_ask', { p_prompt: 'A' });
+  const jobB = await rpc('deepseek_ask', { p_prompt: 'B' });
   r = await rpc('deepseek_claim', { p_worker_id: 'targeted', p_job_id: jobB.body?.job_id });
   check('claim can target a specific job', r.body?.claimed === true && r.body?.job_id === jobB.body?.job_id, r.body);
   r = await rpc('deepseek_claim', { p_worker_id: 'targeted', p_job_id: jobA.body?.job_id });
@@ -279,12 +330,14 @@ async function main() {
   await rpc('deepseek_cancel', { p_job_id: jobA.body?.job_id });
   await rpc('deepseek_complete', { p_job_id: jobB.body?.job_id, p_ok: true });
 
-  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 0, p_payload: { choices: [{ delta: { content: 'po' } }] } });
+  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 0, p_payload: { v: 1, text: 'po' } });
   check('append chunk 0', r.body?.ok === true, r.body);
-  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 1, p_payload: { choices: [{ delta: { content: 'ng' } }] } });
+  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 1, p_payload: { v: 1, text: 'ng' } });
   check('append chunk 1', r.body?.ok === true, r.body);
-  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 1, p_payload: { choices: [{ delta: { content: 'ng' } }] } });
+  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 1, p_payload: { v: 1, text: 'ng' } });
   check('duplicate seq is idempotent', r.body?.ok === true, r.body);
+  r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 2, p_payload: 'not an object' });
+  check('a non-object payload is refused', r.body?.ok === false && r.body?.error === 'bad_payload', r.body);
 
   r = await rpc('deepseek_status', { p_job_id: jobId, p_since_seq: -1 });
   check('status streams both chunks in order', r.body?.ok === true && r.body.chunks?.length === 2 && r.body.chunks[1].seq === 1, r.body);
@@ -294,17 +347,34 @@ async function main() {
   r = await rpc('deepseek_status', { p_job_id: jobId, p_since_seq: 0 });
   check('since_seq filters delivered chunks', r.body?.chunks?.length === 1 && r.body.chunks[0].seq === 1, r.body?.chunks);
 
-  r = await rpc('deepseek_complete', { p_job_id: jobId, p_ok: true, p_metrics: { upstream_ms: 812 } });
+  r = await rpc('deepseek_complete', {
+    p_job_id: jobId,
+    p_ok: true,
+    p_metrics: { upstream_ms: 812, upstream_ttft_ms: 640 },
+    p_session_id: 'sess-abc',
+    p_reply_message_id: 42,
+    p_title: '测试会话',
+  });
   check('complete marks the job done', r.body?.ok === true && r.body?.status === 'done', r.body);
+  check('complete returns the conversation ids', r.body?.session_id === 'sess-abc' && r.body?.reply_message_id === '42', r.body);
 
   r = await rpc('deepseek_status', { p_job_id: jobId, p_since_seq: -1 });
   check('finished jobs report finished', r.body?.finished === true && r.body?.status === 'done', r.body);
   check('custom metrics survive completion', r.body?.metrics?.upstream_ms === 812 && !!r.body?.metrics?.finished_at, r.body?.metrics);
+  check('status exposes the ids a client needs to continue', r.body?.session_id === 'sess-abc' && r.body?.reply_message_id === '42' && r.body?.title === '测试会话', r.body);
 
   r = await rpc('deepseek_append', { p_job_id: jobId, p_seq: 9, p_payload: {} });
   check('appending to a done job is refused', r.body?.ok === false && r.body?.error === 'job_done', r.body);
 
-  r = await rpc('deepseek_enqueue', { p_messages: [{ role: 'user', content: 'cancel me' }] });
+  // a turn queued against an existing conversation keeps its ids
+  r = await rpc('deepseek_ask', { p_prompt: 'continue', p_session_id: 'sess-abc', p_parent_message_id: 42, p_thinking: true, p_search: true });
+  const sessionJobId = r.body?.job_id;
+  r = await rpc('deepseek_claim', { p_worker_id: 'session-worker', p_job_id: sessionJobId });
+  check('claim returns the session ids so the relay can continue', r.body?.session_id === 'sess-abc' && r.body?.parent_message_id === '42', r.body);
+  check('claim returns the thinking/search flags', r.body?.thinking_enabled === true && r.body?.search_enabled === true, r.body);
+  await rpc('deepseek_cancel', { p_job_id: sessionJobId });
+
+  r = await rpc('deepseek_ask', { p_prompt: 'cancel me' });
   const cancelId = r.body?.job_id;
   r = await rpc('deepseek_cancel', { p_job_id: cancelId });
   check('cancel stops a queued job', r.body?.ok === true && r.body?.status === 'cancelled', r.body);
@@ -313,6 +383,8 @@ async function main() {
 
   r = await rpc('deepseek_health', {});
   check('health snapshot works', r.body?.ok === true && typeof r.body?.done_last_hour === 'number', r.body);
+  check('health reports credential state for the status strip', r.body?.credential_configured === true && 'credential_age_minutes' in r.body, r.body);
+  check('health reports the median upstream first-token time', typeof r.body?.median_ttft_ms === 'number' && r.body.median_ttft_ms > 0, r.body);
 
   // worker timeout requeue
   await db.query('update public.deepseek_job set status=$1, claimed_at = now() - interval \'10 minutes\' where id = $2', ['claimed', cancelId]);

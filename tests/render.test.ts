@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import type { EntryMeta } from '../src/lib/api';
-import { entryNode, messageNode, renderEntries } from '../src/lib/render';
+import type { ToolSummary } from '../src/lib/chat-reducer';
+import { applyAssistantModel, assistantNode, entryNode, messageNode, renderEntries } from '../src/lib/render';
 
 const now = Date.now();
 const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
@@ -99,5 +100,74 @@ describe('messageNode', () => {
     expect(messageNode('system', 'hi', '首字 800ms').querySelector('.msg__meta')?.textContent).toBe(
       '首字 800ms',
     );
+  });
+});
+
+// --- assistant turns -------------------------------------------------------
+
+const emptyTools: ToolSummary = { used: false, kinds: [], queries: [], resultCount: 0, pages: [], mode: '' };
+const searchTools: ToolSummary = {
+  used: true,
+  kinds: ['网页搜索 · 6 个结果'],
+  queries: ['上海天气'],
+  resultCount: 6,
+  pages: [],
+  mode: 'DEEP_SEARCH',
+};
+
+describe('assistantNode', () => {
+  it('renders the answer and hides the empty thinking block', () => {
+    const node = assistantNode({ text: '今天晴', thinking: '', tools: null, meta: '', error: null });
+    expect(node.querySelector('.msg__body')?.textContent).toBe('今天晴');
+    expect(node.querySelector('.msg__thinking')?.hasAttribute('hidden')).toBe(true);
+    expect(node.querySelector('.chip')).toBeNull();
+  });
+
+  it('shows no chip for an empty tool summary', () => {
+    const node = assistantNode({ text: 'a', thinking: '', tools: emptyTools, meta: '', error: null });
+    expect(node.querySelector('.chip')).toBeNull();
+  });
+
+  it('shows a "已调用工具" chip instead of trying to render citations', () => {
+    const node = assistantNode({ text: '今天晴[citation:2]', thinking: '', tools: searchTools, meta: '', error: null });
+    const chip = node.querySelector('.chip--tool');
+    expect(chip?.textContent).toBe('已调用工具：网页搜索 · 6 个结果');
+    expect(chip?.getAttribute('title')).toContain('上海天气');
+    expect(node.querySelector('.msg__body')?.textContent).toContain('[citation:2]');
+  });
+
+  it('collapses reasoning into a details block', () => {
+    const node = assistantNode({ text: 'a', thinking: '先算 9.11', tools: null, meta: '', error: null });
+    const details = node.querySelector('.msg__thinking');
+    expect(details?.hasAttribute('hidden')).toBe(false);
+    expect(details?.querySelector('summary')?.textContent).toContain('思考过程');
+    expect(details?.querySelector('pre')?.textContent).toBe('先算 9.11');
+  });
+
+  it('renders the latency line and an error line side by side', () => {
+    const node = assistantNode({ text: 'a', thinking: '', tools: null, meta: '首字 700ms', error: '超时' });
+    expect(node.querySelector('.msg__meta')?.textContent).toBe('首字 700ms');
+    expect(node.querySelector('.msg__error')?.textContent).toContain('超时');
+  });
+
+  it('updates in place while streaming without duplicating nodes', () => {
+    const node = assistantNode({ text: '', thinking: '', tools: null, meta: '', error: null });
+    applyAssistantModel(node, { text: '你', thinking: '', tools: null, meta: '', error: null });
+    applyAssistantModel(node, { text: '你好', thinking: '想想', tools: searchTools, meta: '首字 1s', error: null });
+    expect(node.querySelectorAll('.msg__body')).toHaveLength(1);
+    expect(node.querySelector('.msg__body')?.textContent).toBe('你好');
+    expect(node.querySelectorAll('.chip--tool')).toHaveLength(1);
+    expect(node.querySelectorAll('.msg__thinking pre')).toHaveLength(1);
+  });
+
+  it('hides the footer when there is nothing to say', () => {
+    const node = assistantNode({ text: 'a', thinking: '', tools: null, meta: '', error: null });
+    expect(node.querySelector('.msg__footer')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('keeps the plain messageNode shape for user turns', () => {
+    const node = messageNode('user', 'hi');
+    expect(node.className).toBe('msg msg--user');
+    expect(node.textContent).toBe('hi');
   });
 });

@@ -1,0 +1,441 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1791972641.4619238}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":false,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1791972641.450302,"search_enabled":true,"fragments":[{"id":2,"type":"SEARCH","status":"WIP","content":null,"queries":[{"query":"上海2026年10月14日天气怎么样"}],"results":[]}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":true,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/results","v":[{"url":"https://www.nmc.cn/publish/forecast/ASH/shanghai.html","title":"上海-天气预报","snippet":"上海 21.6℃ ... 降水量 0mm 相对湿度 ... 10-14 20:00 10/14 周三 17℃ 阴 东风 微风 ... 东南风 ... 南风 ... 3.3m/s","cite_index":1,"published_at":1791907200.0,"site_icon":"https://cdn.deepseek.com/site-icons/nmc.cn","site_name":"中央气象台","query_indexes":[0],"provider":null},{"url":"https://www.weather.com.cn/weather1d/101020600.shtml","title":"浦东新区天气预报,浦东新区7天天气预报,浦东新区15天天气预报,浦东新区天气查询","snippet":"18:00更新 | 数据来源 中央气象台 ... 东风1级 18.9℃ # 14日夜间 阴 16°C <3级 日落 17:24 ... 天空阴沉 ... 24°C","cite_index":2,"published_at":1791907200.0,"site_icon":"https://cdn.deepseek.com/site-icons/weather.com.cn","site_name":"天气网","query_indexes":[0],"provider":null},{"url":"https://www.nmc.cn/publish/forecast/ASH/xujiahui.html","title":"徐家汇-天气预报","snippet":"徐家汇 ... 降水量 0mm 东南风 微风 相对湿度 ... 10-14 20:00 10/14 周三 17℃ 阴 东风 ... 南风 ... 东北风 ... 3.3m/s","cite_index":3,"published_at":1791907200.0,"site_icon":"https://cdn.deepseek.com/site-icons/nmc.cn","site_name":"中央气象台","query_indexes":[0],"provider":null},{"url":"http://sh.weather.com.cn/gdtp/10/4818825.shtml","title":"阳光回归不多时，又将出走？","snippet":"10/14 ... 申城今日云层较厚，天空暗沉，局部地区出现短时小雨，雨势微弱。各区最高气温在23~25℃之间，市区徐家汇站定格在23.9℃，户外秋风阵阵，颇为凉爽。","cite_index":4,"published_at":1791734400.0,"site_icon":"https://cdn.deepseek.com/site-icons/weather.com.cn","site_name":"天气网","query_indexes":[0],"provider":null},{"url":"https://www.weather.com.cn/weather/10102010008A.shtml","title":"【陆家嘴中心绿地天气】陆家嘴中心绿地天气预报,天气预报一周,天气预报15天查询","snippet":"多云转晴 ... <3级 ... 25/19℃ <3级 ... 晴转多云 25/18℃ ... 14日（周三） 多云 25/18℃ <3级 # 15日（周四）","cite_index":5,"published_at":1791475200.0,"site_icon":"https://cdn.deepseek.com/site-icons/weather.com.cn","site_name":"天气网","query_indexes":[0],"provider":null},{"url":"https://tianqi.moji.com/today/china/shanghai/nanhui-district","title":"【南汇区（现浦东新区）今天天气】_今天南汇区（现浦东新区）天气_今日天气预报","snippet":"2026年10月14日 丙午[马]年 九月初五 ... 19 晴 ... 今天白天 多云 25° ... 55 ## 今天夜间 阴 16° 日落 17...","cite_index":6,"published_at":1791907200.0,"site_icon":"https://cdn.deepseek.com/site-icons/moji.com","site_name":"墨迹天气","query_indexes":[0],"provider":null}]}
+
+data: {"p":"response/fragments/-1","o":"BATCH","v":[{"p":"status","v":"FINISHED"},{"p":"content","v":"搜索到 6 个网页"}]}
+
+data: {"p":"response/conversation_mode","o":"SET","v":"SEARCH"}
+
+data: {"p":"response/has_pending_fragment","v":true}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"fragments","o":"APPEND","v":[{"id":3,"type":"RESPONSE","content":"上海","references":[],"stage_id":2}]},{"p":"has_pending_fragment","o":"SET","v":false}]}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"今天"}
+
+data: {"v":"（"}
+
+data: {"v":"10"}
+
+data: {"v":"月"}
+
+data: {"v":"14"}
+
+data: {"v":"日"}
+
+data: {"v":"）"}
+
+data: {"v":"天气"}
+
+data: {"v":"以"}
+
+data: {"v":"阴"}
+
+data: {"v":"天"}
+
+data: {"v":"为主"}
+
+data: {"v":"，"}
+
+data: {"v":"气温"}
+
+data: {"v":"在"}
+
+data: {"v":" **"}
+
+data: {"v":"17"}
+
+data: {"v":"℃"}
+
+data: {"v":" "}
+
+data: {"v":"至"}
+
+data: {"v":" "}
+
+data: {"v":"24"}
+
+data: {"v":"℃"}
+
+data: {"v":"**"}
+
+data: {"v":" "}
+
+data: {"v":"之间"}
+
+data: {"v":"，"}
+
+data: {"v":"体"}
+
+data: {"v":"感"}
+
+data: {"v":"比较"}
+
+data: {"v":"凉爽"}
+
+data: {"v":"。\n\n"}
+
+data: {"v":"###"}
+
+data: {"v":" ☁"}
+
+data: {"v":"️"}
+
+data: {"v":" "}
+
+data: {"v":"具体"}
+
+data: {"v":"天气"}
+
+data: {"v":"详情"}
+
+data: {"v":"\n"}
+
+data: {"v":"*"}
+
+data: {"v":"  "}
+
+data: {"v":" **"}
+
+data: {"v":"气温"}
+
+data: {"v":"与"}
+
+data: {"v":"天气"}
+
+data: {"v":"**"}
+
+data: {"v":"："}
+
+data: {"v":"白天"}
+
+data: {"v":"最高"}
+
+data: {"v":"温"}
+
+data: {"v":"约"}
+
+data: {"v":" **"}
+
+data: {"v":"24"}
+
+data: {"v":"℃"}
+
+data: {"v":"**"}
+
+data: {"v":"，"}
+
+data: {"v":"夜间"}
+
+data: {"v":"最低"}
+
+data: {"v":"温"}
+
+data: {"v":"降至"}
+
+data: {"v":" **"}
+
+data: {"v":"16"}
+
+data: {"v":"℃"}
+
+data: {"v":"-"}
+
+data: {"v":"17"}
+
+data: {"v":"℃"}
+
+data: {"v":"**"}
+
+data: {"v":"，"}
+
+data: {"v":"全天"}
+
+data: {"v":"阴"}
+
+data: {"v":"天"}
+
+data: {"v":"，"}
+
+data: {"v":"部分"}
+
+data: {"v":"区域"}
+
+data: {"v":"可能"}
+
+data: {"v":"多云"}
+
+data: {"v":"[citation:1]"}
+
+data: {"v":"[citation:2]"}
+
+data: {"v":"[citation:6]"}
+
+data: {"v":"。\n"}
+
+data: {"v":"*"}
+
+data: {"v":"  "}
+
+data: {"v":" **"}
+
+data: {"v":"风力"}
+
+data: {"v":"与"}
+
+data: {"v":"湿度"}
+
+data: {"v":"**"}
+
+data: {"v":"："}
+
+data: {"v":"吹"}
+
+data: {"v":"轻微的"}
+
+data: {"v":"东风"}
+
+data: {"v":"或"}
+
+data: {"v":"东南"}
+
+data: {"v":"风"}
+
+data: {"v":"，"}
+
+data: {"v":"风力"}
+
+data: {"v":"不大"}
+
+data: {"v":"（"}
+
+data: {"v":"小于"}
+
+data: {"v":"3"}
+
+data: {"v":"级"}
+
+data: {"v":"）。"}
+
+data: {"v":"相对"}
+
+data: {"v":"湿度"}
+
+data: {"v":"约"}
+
+data: {"v":" **"}
+
+data: {"v":"48"}
+
+data: {"v":"%-"}
+
+data: {"v":"60"}
+
+data: {"v":"%"}
+
+data: {"v":"**"}
+
+data: {"v":"[citation:1]"}
+
+data: {"v":"[citation:2]"}
+
+data: {"v":"[citation:3]"}
+
+data: {"v":"。\n"}
+
+data: {"v":"*"}
+
+data: {"v":"  "}
+
+data: {"v":" **"}
+
+data: {"v":"空气质量"}
+
+data: {"v":"**"}
+
+data: {"v":"："}
+
+data: {"v":"空气质量"}
+
+data: {"v":"为"}
+
+data: {"v":" **"}
+
+data: {"v":"优"}
+
+data: {"v":"**"}
+
+data: {"v":"，"}
+
+data: {"v":"体"}
+
+data: {"v":"感"}
+
+data: {"v":"舒适"}
+
+data: {"v":"[citation:1]"}
+
+data: {"v":"[citation:3]"}
+
+data: {"v":"。\n\n"}
+
+data: {"v":"###"}
+
+data: {"v":" 💡"}
+
+data: {"v":" "}
+
+data: {"v":"生活"}
+
+data: {"v":"提示"}
+
+data: {"v":"\n"}
+
+data: {"v":"*"}
+
+data: {"v":"  "}
+
+data: {"v":" **"}
+
+data: {"v":"穿衣"}
+
+data: {"v":"建议"}
+
+data: {"v":"**"}
+
+data: {"v":"："}
+
+data: {"v":"降温"}
+
+data: {"v":"较"}
+
+data: {"v":"明显"}
+
+data: {"v":"，"}
+
+data: {"v":"建议"}
+
+data: {"v":"穿"}
+
+data: {"v":"薄"}
+
+data: {"v":"外套"}
+
+data: {"v":"、"}
+
+data: {"v":"风"}
+
+data: {"v":"衣"}
+
+data: {"v":"或"}
+
+data: {"v":"牛仔裤"}
+
+data: {"v":"，"}
+
+data: {"v":"注意"}
+
+data: {"v":"预防"}
+
+data: {"v":"感冒"}
+
+data: {"v":"[citation:2]"}
+
+data: {"v":"。\n"}
+
+data: {"v":"*"}
+
+data: {"v":"  "}
+
+data: {"v":" **"}
+
+data: {"v":"出行"}
+
+data: {"v":"参考"}
+
+data: {"v":"**"}
+
+data: {"v":"："}
+
+data: {"v":"今天"}
+
+data: {"v":"紫外线"}
+
+data: {"v":"弱"}
+
+data: {"v":"，"}
+
+data: {"v":"天气"}
+
+data: {"v":"也"}
+
+data: {"v":"适合"}
+
+data: {"v":"洗"}
+
+data: {"v":"车"}
+
+data: {"v":"。"}
+
+data: {"v":"不过"}
+
+data: {"v":"局部"}
+
+data: {"v":"地区"}
+
+data: {"v":"可能"}
+
+data: {"v":"偶尔"}
+
+data: {"v":"飘"}
+
+data: {"v":"些"}
+
+data: {"v":"短"}
+
+data: {"v":"时"}
+
+data: {"v":"小雨"}
+
+data: {"v":"，"}
+
+data: {"v":"出门"}
+
+data: {"v":"最好"}
+
+data: {"v":"还是"}
+
+data: {"v":"备"}
+
+data: {"v":"把"}
+
+data: {"v":"伞"}
+
+data: {"v":"以防"}
+
+data: {"v":"万一"}
+
+data: {"v":"[citation:2]"}
+
+data: {"v":"[citation:4]"}
+
+data: {"v":"。"}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":243},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1791972643.7296379}
+
+event: title
+data: {"content":"上海今日天气"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

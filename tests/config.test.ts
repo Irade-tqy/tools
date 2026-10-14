@@ -12,11 +12,16 @@ const store = new Map<string, string>();
 const config = await import('../src/lib/config');
 
 const {
+  ADMIN_TOKEN_KEY,
   CONFIG_KEY,
   TOKEN_KEY,
   clearConfig,
+  isAdminMode,
   isConfigured,
   isValidUrl,
+  isModelType,
+  loadAdminToken,
+  saveAdminToken,
   loadConfig,
   loadToken,
   normalizeUrl,
@@ -35,10 +40,10 @@ beforeEach(() => {
 });
 
 describe('parseHashConfig', () => {
-  it('reads url, anon key, model and transport', () => {
+  it('reads url, anon key, function name and model type', () => {
     expect(
-      parseHashConfig('#supabase=https://x.supabase.co/&anon=abc123&model=r1&transport=browser'),
-    ).toEqual({ url: 'https://x.supabase.co', anonKey: 'abc123', model: 'r1', transport: 'browser' });
+      parseHashConfig('#supabase=https://x.supabase.co/&anon=abc123&model=expert&function=relay'),
+    ).toEqual({ url: 'https://x.supabase.co', anonKey: 'abc123', modelType: 'expert', functionName: 'relay' });
   });
 
   it('accepts the url/key aliases and a leading hash or none', () => {
@@ -48,8 +53,20 @@ describe('parseHashConfig', () => {
     });
   });
 
-  it('ignores unknown and invalid transport values', () => {
-    expect(parseHashConfig('#view=chat&transport=nope')).toEqual({});
+  it('ignores unknown model types and routing-only hashes', () => {
+    expect(parseHashConfig('#view=chat&transport=nope&model=gpt-4')).toEqual({});
+  });
+
+  it('only reveals the backend page when asked', () => {
+    expect(isAdminMode('?admin=1', '')).toBe(true);
+    expect(isAdminMode('', '#view=chat&admin=1')).toBe(true);
+    expect(isAdminMode('?admin=0', '#view=chat')).toBe(false);
+    expect(isAdminMode('', '')).toBe(false);
+  });
+
+  it('accepts only the three DeepSeek model types', () => {
+    expect(isModelType('expert')).toBe(true);
+    expect(isModelType('deepseek-chat')).toBe(false);
   });
 
   it('returns nothing for an empty hash', () => {
@@ -82,8 +99,8 @@ describe('loadConfig precedence', () => {
     expect(loadConfig('')).toEqual({
       url: DEFAULT_SUPABASE_URL,
       anonKey: DEFAULT_SUPABASE_ANON_KEY,
-      model: 'deepseek-chat',
-      transport: 'auto',
+      functionName: 'deepseek-chat',
+      modelType: 'default',
     });
   });
 
@@ -122,7 +139,7 @@ describe('isConfigured', () => {
   });
 
   it('requires a plausible url and a real-looking key', () => {
-    const base = { url: 'https://x.supabase.co', anonKey: 'x'.repeat(40), model: 'm', transport: 'auto' as const };
+    const base = { url: 'https://x.supabase.co', anonKey: 'x'.repeat(40), functionName: 'fn', modelType: 'default' as const };
     expect(isConfigured(base)).toBe(true);
     expect(isConfigured({ ...base, url: 'nope' })).toBe(false);
     expect(isConfigured({ ...base, anonKey: 'short' })).toBe(false);
@@ -131,12 +148,15 @@ describe('isConfigured', () => {
 
 describe('persistence', () => {
   it('saves and clears config plus token together', () => {
-    saveConfig({ url: 'https://x.supabase.co', anonKey: 'k'.repeat(30), model: 'm', transport: 'edge' });
+    saveConfig({ url: 'https://x.supabase.co', anonKey: 'k'.repeat(30), functionName: 'fn', modelType: 'expert' });
     saveToken({ token: 't', expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    saveAdminToken('admin-1');
     expect(store.has(CONFIG_KEY)).toBe(true);
     clearConfig();
     expect(store.has(CONFIG_KEY)).toBe(false);
     expect(store.has(TOKEN_KEY)).toBe(false);
+    expect(store.has(ADMIN_TOKEN_KEY)).toBe(false);
+    expect(loadAdminToken()).toBe('');
   });
 
   it('drops a token that is expired or about to expire', () => {

@@ -1,0 +1,46 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1791975016.0718389}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":false,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1791975016.0568988,"search_enabled":false,"fragments":[{"id":2,"type":"RESPONSE","content":"幂","references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"等"}
+
+data: {"v":"性"}
+
+data: {"v":"是指"}
+
+data: {"v":"同一个"}
+
+data: {"v":"操作"}
+
+data: {"v":"执行"}
+
+data: {"v":"一次"}
+
+data: {"v":"和执行"}
+
+data: {"v":"多次"}
+
+data: {"v":"所产生的"}
+
+data: {"v":"效果"}
+
+data: {"v":"相同"}
+
+data: {"v":"。"}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":54},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1791975016.3415768}
+
+event: title
+data: {"content":"幂等性定义"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}

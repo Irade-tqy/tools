@@ -13,7 +13,8 @@
       <nav class="tabs" role="tablist">
         <button class="tab is-active" role="tab" data-view="clipboard" aria-selected="true">云剪贴板</button>
         <button class="tab" role="tab" data-view="chat" aria-selected="false">DeepSeek</button>
-        <button class="tab" role="tab" data-view="settings" aria-selected="false">设置</button>
+        <!-- 后台：只有 ?admin=1 时才显示 -->
+        <button class="tab" role="tab" data-view="admin" aria-selected="false" hidden>后台</button>
       </nav>
       <div class="status" id="status-strip" aria-live="polite">
         <span class="dot dot--idle" id="status-dot"></span>
@@ -84,12 +85,13 @@
       <!-- ------------------------------------------------------------------ -->
       <section class="view" id="view-chat" data-view="chat">
         <div class="chat">
-          <div class="chat__log" id="chat-log" aria-live="polite">
-            <p class="muted">
-              消息会排队等待转发通道（Edge Function，或已登录 DeepSeek 的浏览器标签页）领取。
-              打开“设置”查看当前可用通道。
-            </p>
+          <div class="chat__session">
+            <span id="chat-session" class="muted"></span>
+            <button class="btn btn--ghost btn--sm" id="chat-new-session" type="button">新会话</button>
           </div>
+
+          <div class="chat__log" id="chat-log" aria-live="polite"></div>
+
           <form class="chat__composer" id="chat-form">
             <textarea
               id="chat-input"
@@ -97,25 +99,89 @@
               placeholder="向 DeepSeek 提问…（Ctrl/Cmd + Enter 发送）"
             ></textarea>
             <div class="row row--between">
-              <span class="muted" id="chat-status"></span>
+              <div class="row row--tight chat__options">
+                <label class="field field--inline">
+                  <span>模型</span>
+                  <select id="chat-model">
+                    <option value="default">默认</option>
+                    <option value="expert">专家</option>
+                    <option value="vision">视觉</option>
+                  </select>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="chat-thinking" />
+                  <span>深度思考</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="chat-search" />
+                  <span>联网搜索</span>
+                </label>
+              </div>
               <div class="row row--tight">
                 <button class="btn" id="chat-stop" type="button" hidden>停止</button>
                 <button class="btn btn--primary" id="chat-send" type="submit">发送</button>
               </div>
             </div>
+            <p class="muted" id="chat-status"></p>
           </form>
         </div>
       </section>
 
       <!-- ------------------------------------------------------------------ -->
-      <section class="view" id="view-settings" data-view="settings">
+      <!-- 后台：线上默认不显示，?admin=1 才出现 -->
+      <section class="view" id="view-admin" data-view="admin" hidden>
         <div class="settings">
-          <form class="card" id="config-form">
-            <h2>连接配置</h2>
+          <div class="card">
+            <h2>DeepSeek 登录态</h2>
             <p class="muted">
-              本项目已内置 Supabase 地址与 anon key —— 这两个值是公开的客户端凭据，
-              数据边界由行级安全策略（RLS）控制。自托管到其他 project 时才需要在这里覆盖，
-              覆盖值只存本机浏览器。
+              粘贴下面任意一种字符串，服务端会解析出需要的数据、当场向上游验证，然后保存：
+              <code>localStorage.userToken</code>、DevTools 的 <em>Copy as cURL</em>、
+              Cookie 头、JSON，或以前保存过的 <code>dscred1:…</code>。
+              登录过期时重新粘贴一次即可，不需要重新部署。
+            </p>
+            <label class="field">
+              <span>管理令牌（TOOLS_ADMIN_TOKEN）</span>
+              <input id="admin-token" type="password" placeholder="只有后台页面需要" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>凭证字符串</span>
+              <textarea id="cred-input" rows="4" spellcheck="false" placeholder="粘贴 userToken / cURL / Cookie / JSON / dscred1:…"></textarea>
+            </label>
+            <p class="muted" id="cred-preview"></p>
+            <div class="row row--between">
+              <label class="check">
+                <input type="checkbox" id="cred-verify" checked />
+                <span>保存前向上游验证</span>
+              </label>
+              <button class="btn btn--primary" id="cred-save" type="button">验证并保存</button>
+            </div>
+            <p class="form-error" id="cred-error" role="alert" hidden></p>
+            <label class="field">
+              <span>可用字符串（可复制保存，下次直接粘贴）</span>
+              <textarea id="cred-canonical" rows="2" spellcheck="false" readonly placeholder="保存成功后出现在这里"></textarea>
+            </label>
+            <div class="row row--between">
+              <span class="muted" id="cred-status"></span>
+              <div class="row row--tight">
+                <button class="btn btn--ghost btn--sm" id="cred-status-refresh" type="button">刷新状态</button>
+                <button class="btn btn--sm" id="cred-copy" type="button">复制可用字符串</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>后端状态</h2>
+            <div class="row row--between">
+              <dl class="kv" id="health-kv"><dt>…</dt></dl>
+              <button class="btn btn--ghost btn--sm" id="health-refresh" type="button">刷新</button>
+            </div>
+          </div>
+
+          <form class="card" id="config-form">
+            <h2>连接配置（自托管时才需要改）</h2>
+            <p class="muted">
+              本项目已内置 Supabase 地址、anon key 与 Edge Function 名 —— 这些是公开的客户端值，
+              数据边界由行级安全策略（RLS）控制。覆盖值只存本机浏览器。
             </p>
             <label class="field">
               <span>Supabase URL</span>
@@ -126,15 +192,15 @@
               <input id="cfg-anon" placeholder="eyJhbGciOi…" spellcheck="false" required />
             </label>
             <label class="field">
-              <span>DeepSeek 模型</span>
-              <input id="cfg-model" value="deepseek-chat" spellcheck="false" />
+              <span>Edge Function 名</span>
+              <input id="cfg-function" placeholder="deepseek-chat" spellcheck="false" required />
             </label>
             <label class="field">
-              <span>转发通道</span>
-              <select id="cfg-transport">
-                <option value="auto">自动（优先 Edge Function）</option>
-                <option value="edge">仅 Edge Function</option>
-                <option value="browser">仅浏览器标签页</option>
+              <span>默认模型</span>
+              <select id="cfg-model">
+                <option value="default">默认</option>
+                <option value="expert">专家</option>
+                <option value="vision">视觉</option>
               </select>
             </label>
             <div class="row row--end">
@@ -143,20 +209,6 @@
             </div>
             <p class="form-error" id="config-error" role="alert" hidden></p>
           </form>
-
-          <div class="card">
-            <h2>后端状态</h2>
-            <dl class="kv" id="health-kv"><dt>…</dt></dl>
-            <h3>浏览器转发标签页</h3>
-            <p class="muted">
-              若 Edge Function 没有 DeepSeek 登录态：在已登录 chat.deepseek.com 的标签页里运行
-              <code>deepseek-worker.js</code>（书签脚本或控制台粘贴），它会领取队列里的任务并回传流。
-            </p>
-            <div class="row row--end">
-              <button class="btn" id="copy-worker" type="button">复制 worker 代码</button>
-              <a class="btn btn--ghost" id="worker-link" href="./deepseek-worker.js" target="_blank" rel="noopener">打开 worker 源码</a>
-            </div>
-          </div>
         </div>
       </section>
     </main>

@@ -5,7 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_MODEL,
+  DEFAULT_FUNCTION_NAME,
+  DEFAULT_MODEL_TYPE,
   DEFAULT_SUPABASE_ANON_KEY,
   DEFAULT_SUPABASE_URL,
 } from '../src/lib/defaults';
@@ -52,10 +53,11 @@ describe('committed defaults', () => {
       .split('\n')
       .filter((line) => !line.trim().startsWith('//'))
       .join('\n');
-    expect(code).not.toMatch(/service_role|SERVICE_ROLE_KEY|DEEPSEEK_WEB_COOKIE|DB_PASSWORD/i);
+    expect(code).not.toMatch(/service_role|SERVICE_ROLE_KEY|DEEPSEEK_WEB_COOKIE|DEEPSEEK_CREDENTIAL|ADMIN_TOKEN|DB_PASSWORD/i);
   });
 
-  it('keeps a sane default model', () => {
-    expect(DEFAULT_MODEL).toBe('deepseek-chat');
+  it('bakes in the public function name and model type', () => {
+    expect(DEFAULT_FUNCTION_NAME).toBe('deepseek-chat');
+    expect(DEFAULT_MODEL_TYPE).toBe('default');
   });
 });

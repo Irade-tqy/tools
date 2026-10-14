@@ -170,7 +170,18 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #1c4c8f; outline-
 .badge--file { color: var(--accent); border-color: rgba(76, 141, 255, 0.4); }
 
 /* --- chat -------------------------------------------------------------- */
-.chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; height: calc(100vh - 130px); }
+.chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; height: calc(100vh - 130px); }
+.chat__session {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.chat__options { flex-wrap: wrap; }
+.field--inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.field--inline > span { margin: 0; }
+.field--inline select { width: auto; padding: 4px 8px; font-size: 13px; }
 .chat__log {
   overflow: auto;
   background: var(--bg-card);
@@ -186,7 +197,40 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #1c4c8f; outline-
 .msg--assistant { align-self: flex-start; background: var(--bg-soft); border: 1px solid var(--line); }
 .msg--system { align-self: center; font-size: 12.5px; color: var(--fg-dim); background: none; }
 .msg__meta { margin-top: 6px; font-size: 11.5px; color: var(--fg-dim); font-family: var(--mono); }
+.msg__body { white-space: pre-wrap; }
+.msg__footer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.msg__error { color: #ff9a9a; font-size: 12px; }
+.msg__thinking {
+  margin-bottom: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.msg__thinking summary { cursor: pointer; font-size: 12px; color: var(--fg-dim); }
+.msg__thinking pre {
+  margin: 8px 0 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  background: #20365c;
+  color: #9fc3ff;
+  border: 1px solid #2c4d80;
+}
+.chip--tool { background: #123021; border-color: #1f5130; color: #7ee2a8; }
 .chat__composer textarea { resize: vertical; }
+#cred-canonical { font-family: var(--mono); font-size: 11.5px; }
 
 /* --- settings ---------------------------------------------------------- */
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }

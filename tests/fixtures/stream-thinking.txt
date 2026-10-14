@@ -1,0 +1,777 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1791972642.887039}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":true,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1791972642.876617,"search_enabled":false,"fragments":[{"id":2,"type":"THINK","content":"我们需要","elapsed_secs":null,"references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"回答"}
+
+data: {"v":"中文"}
+
+data: {"v":"问题"}
+
+data: {"v":"：“"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"和"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"哪个"}
+
+data: {"v":"大"}
+
+data: {"v":"？"}
+
+data: {"v":"简述"}
+
+data: {"v":"理由"}
+
+data: {"v":"”。"}
+
+data: {"v":"需要注意"}
+
+data: {"v":"可能是"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"？"}
+
+data: {"v":"通常"}
+
+data: {"v":"数学"}
+
+data: {"v":"上"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" <"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"，"}
+
+data: {"v":"因为"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" ="}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"，"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"="}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":"，"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"。"}
+
+data: {"v":"但也"}
+
+data: {"v":"可能"}
+
+data: {"v":"有人"}
+
+data: {"v":"误"}
+
+data: {"v":"以为"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"是"}
+
+data: {"v":"九月"}
+
+data: {"v":"十一"}
+
+data: {"v":"日"}
+
+data: {"v":"？"}
+
+data: {"v":"如果是"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"比较"}
+
+data: {"v":"，"}
+
+data: {"v":"比如"}
+
+data: {"v":"软件"}
+
+data: {"v":"版本"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"可能"}
+
+data: {"v":"大于"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"，"}
+
+data: {"v":"因为"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"按"}
+
+data: {"v":"分段"}
+
+data: {"v":"数字"}
+
+data: {"v":"比较"}
+
+data: {"v":"："}
+
+data: {"v":"9"}
+
+data: {"v":"="}
+
+data: {"v":"9"}
+
+data: {"v":"，"}
+
+data: {"v":"11"}
+
+data: {"v":">"}
+
+data: {"v":"9"}
+
+data: {"v":"，"}
+
+data: {"v":"所以"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"。"}
+
+data: {"v":"问题"}
+
+data: {"v":"没有"}
+
+data: {"v":"明确"}
+
+data: {"v":"上下文"}
+
+data: {"v":"。"}
+
+data: {"v":"需要"}
+
+data: {"v":"判断"}
+
+data: {"v":"。"}
+
+data: {"v":"用户"}
+
+data: {"v":"问"}
+
+data: {"v":"“"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"和"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"哪个"}
+
+data: {"v":"大"}
+
+data: {"v":"？"}
+
+data: {"v":"简述"}
+
+data: {"v":"理由"}
+
+data: {"v":"”。"}
+
+data: {"v":"常见"}
+
+data: {"v":"陷阱"}
+
+data: {"v":"："}
+
+data: {"v":"数学"}
+
+data: {"v":"上"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"更大"}
+
+data: {"v":"；"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"中"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"更大"}
+
+data: {"v":"。"}
+
+data: {"v":"应该"}
+
+data: {"v":"指出"}
+
+data: {"v":"取决于"}
+
+data: {"v":"语境"}
+
+data: {"v":"。"}
+
+data: {"v":"通常"}
+
+data: {"v":"作为"}
+
+data: {"v":"小数"}
+
+data: {"v":"，"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"。"}
+
+data: {"v":"简述"}
+
+data: {"v":"理由"}
+
+data: {"v":"。"}
+
+data: {"v":"可以"}
+
+data: {"v":"回答"}
+
+data: {"v":"："}
+
+data: {"v":"若"}
+
+data: {"v":"按"}
+
+data: {"v":"小数"}
+
+data: {"v":"，"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" ="}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":"，"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"，"}
+
+data: {"v":"所以"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"大"}
+
+data: {"v":"。"}
+
+data: {"v":"若"}
+
+data: {"v":"按"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"，"}
+
+data: {"v":"则"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"。"}
+
+data: {"v":"需要"}
+
+data: {"v":"看"}
+
+data: {"v":"场景"}
+
+data: {"v":"。"}
+
+data: {"v":"由于"}
+
+data: {"v":"问"}
+
+data: {"v":"“"}
+
+data: {"v":"哪个"}
+
+data: {"v":"大"}
+
+data: {"v":"”"}
+
+data: {"v":"没有"}
+
+data: {"v":"指定"}
+
+data: {"v":"，"}
+
+data: {"v":"最好"}
+
+data: {"v":"说明"}
+
+data: {"v":"默认"}
+
+data: {"v":"数学"}
+
+data: {"v":"小数"}
+
+data: {"v":"。"}
+
+data: {"v":"最终"}
+
+data: {"v":"简洁"}
+
+data: {"v":"。"}
+
+data: {"p":"response/fragments/-1/elapsed_secs","o":"SET","v":1.889519889}
+
+data: {"p":"response/fragments","o":"APPEND","v":[{"id":3,"type":"RESPONSE","content":"如果","references":[],"stage_id":1}]}
+
+data: {"p":"response/fragments/-1/content","v":"按"}
+
+data: {"v":"**"}
+
+data: {"v":"数学"}
+
+data: {"v":"小数"}
+
+data: {"v":"**"}
+
+data: {"v":"比较"}
+
+data: {"v":"："}
+
+data: {"v":"**"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"更大"}
+
+data: {"v":"**"}
+
+data: {"v":"。\n\n"}
+
+data: {"v":"理由"}
+
+data: {"v":"："}
+
+data: {"v":"  \n"}
+
+data: {"v":"\\["}
+
+data: {"v":"\n"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" ="}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":"\n"}
+
+data: {"v":"\\"}
+
+data: {"v":"]\n"}
+
+data: {"v":"而"}
+
+data: {"v":"  \n"}
+
+data: {"v":"\\["}
+
+data: {"v":"\n"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"90"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"\n"}
+
+data: {"v":"\\"}
+
+data: {"v":"]\n"}
+
+data: {"v":"所以"}
+
+data: {"v":" **"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":"**"}
+
+data: {"v":"。\n\n"}
+
+data: {"v":"不过"}
+
+data: {"v":"如果"}
+
+data: {"v":"它们是"}
+
+data: {"v":"**"}
+
+data: {"v":"版本"}
+
+data: {"v":"号"}
+
+data: {"v":"**"}
+
+data: {"v":"（"}
+
+data: {"v":"如"}
+
+data: {"v":"软件"}
+
+data: {"v":"版本"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" "}
+
+data: {"v":"和"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"），"}
+
+data: {"v":"则"}
+
+data: {"v":"通常"}
+
+data: {"v":"按"}
+
+data: {"v":"分段"}
+
+data: {"v":"比较"}
+
+data: {"v":"："}
+
+data: {"v":"9"}
+
+data: {"v":" "}
+
+data: {"v":"相同"}
+
+data: {"v":"，"}
+
+data: {"v":"11"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"，"}
+
+data: {"v":"所以"}
+
+data: {"v":" **"}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"11"}
+
+data: {"v":" >"}
+
+data: {"v":" "}
+
+data: {"v":"9"}
+
+data: {"v":"."}
+
+data: {"v":"9"}
+
+data: {"v":"**"}
+
+data: {"v":"。"}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":180},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1791972644.801715}
+
+event: title
+data: {"content":"9.11与9.9比较"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

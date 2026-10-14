@@ -2,6 +2,7 @@
 // CodeMirror — so they can be unit tested under jsdom.
 
 import type { EntryMeta } from './api';
+import type { ToolSummary } from './chat-reducer';
 import { humanSize, relDeadline, relTime } from './dom-helpers';
 
 export interface EntryHandlers {
@@ -96,4 +97,85 @@ export function messageNode(
     node.append(metaNode);
   }
   return node;
+}
+
+// ---------------------------------------------------------------------------
+// assistant messages
+// ---------------------------------------------------------------------------
+
+export interface AssistantModel {
+  text: string;
+  thinking: string;
+  tools: ToolSummary | null;
+  meta: string;
+  error: string | null;
+}
+
+/**
+ * An assistant turn: reasoning (collapsed), the answer, a "调用了工具" chip when DeepSeek
+ * searched or opened pages, and the latency line. Citations are intentionally not rendered —
+ * the `[citation:N]` markers stay in the text, the chip says enough.
+ */
+export function assistantNode(model: AssistantModel): HTMLDivElement {
+  const node = document.createElement('div');
+  node.className = 'msg msg--assistant';
+  node.append(document.createElement('details'), document.createElement('div'), document.createElement('div'));
+  applyAssistantModel(node, model);
+  return node;
+}
+
+export function applyAssistantModel(node: HTMLElement, model: AssistantModel): void {
+  // assistantNode() always creates exactly these three children.
+  const thinkingNode = node.children[0] as HTMLElement | undefined;
+  const body = node.children[1] as HTMLElement | undefined;
+  const footer = node.children[2] as HTMLElement | undefined;
+  if (!thinkingNode || !body || !footer) return;
+
+  // reasoning
+  thinkingNode.className = 'msg__thinking';
+  thinkingNode.textContent = '';
+  if (model.thinking) {
+    const summary = document.createElement('summary');
+    summary.textContent = `思考过程（${model.thinking.length} 字）`;
+    const pre = document.createElement('pre');
+    pre.textContent = model.thinking;
+    thinkingNode.append(summary, pre);
+    thinkingNode.hidden = false;
+  } else {
+    thinkingNode.hidden = true;
+  }
+
+  // answer
+  body.className = 'msg__body';
+  body.textContent = model.text || (model.error ? '' : '…');
+
+  // tool chip + latency / error line
+  footer.textContent = '';
+  footer.className = 'msg__footer';
+  if (model.tools?.used) {
+    const chip = document.createElement('span');
+    chip.className = 'chip chip--tool';
+    chip.textContent = `已调用工具：${model.tools.kinds.join('、') || '搜索'}`;
+    if (model.tools.queries.length) chip.title = `搜索词：${model.tools.queries.join(' / ')}`;
+    footer.append(chip);
+    if (model.tools.mode && model.tools.mode !== 'DEFAULT') {
+      const mode = document.createElement('span');
+      mode.className = 'chip';
+      mode.textContent = model.tools.mode === 'DEEP_SEARCH' ? '深度搜索模式' : model.tools.mode;
+      footer.append(mode);
+    }
+  }
+  if (model.meta) {
+    const meta = document.createElement('span');
+    meta.className = 'msg__meta';
+    meta.textContent = model.meta;
+    footer.append(meta);
+  }
+  if (model.error) {
+    const err = document.createElement('span');
+    err.className = 'msg__error';
+    err.textContent = `错误：${model.error}`;
+    footer.append(err);
+  }
+  footer.hidden = !footer.children.length;
 }

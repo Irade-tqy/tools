@@ -71,7 +71,12 @@ async function rpc(fn, args) {
   return res.json();
 }
 
-async function fakeTransport({ respondWith, abortOnSeq }) {
+/**
+ * Stand in for the Edge Function: claim whatever the UI queued and append the same
+ * normalized chunks the real relay sends (v1 text / tool / done frames), then complete the
+ * job with the conversation ids so the UI can continue the session.
+ */
+async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool }) {
   const workerId = `smoke-${Math.random().toString(36).slice(2, 8)}`;
   const started = Date.now();
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -82,22 +87,56 @@ async function fakeTransport({ respondWith, abortOnSeq }) {
     }
     const pieces = respondWith.match(/.{1,3}/gu) || [];
     let seq = 0;
-    for (const [i, piece] of pieces.entries()) {
-      await new Promise((r) => setTimeout(r, 40));
-      const out = await rpc('deepseek_append', {
-        p_job_id: claim.job_id,
-        p_seq: seq,
-        p_payload: { choices: [{ delta: { content: piece }, index: 0 }], _transport: 'smoke' },
-      });
-      if (!out.ok && abortOnSeq != null && seq >= abortOnSeq) return { job_id: claim.job_id, cancelled: true, seq };
+    const append = async (payload) => {
+      const out = await rpc('deepseek_append', { p_job_id: claim.job_id, p_seq: seq, p_payload: payload });
       seq += 1;
+      return out;
+    };
+    if (withTool) {
+      await append({
+        v: 1,
+        _transport: 'smoke',
+        tool: {
+          id: 1,
+          type: 'SEARCH',
+          status: 'FINISHED',
+          label: '搜索到 2 个网页',
+          queries: ['上海天气'],
+          results: [
+            { cite_index: 1, title: '气象台', url: 'https://a.example', site_name: 'a.example', snippet: '晴' },
+            { cite_index: 2, title: '天气网', url: 'https://b.example', site_name: 'b.example', snippet: '多云' },
+          ],
+          page: null,
+        },
+      });
     }
+    for (const piece of pieces) {
+      await new Promise((r) => setTimeout(r, 40));
+      const out = await append({ v: 1, _transport: 'smoke', text: piece });
+      if (!out.ok && abortOnSeq != null && seq >= abortOnSeq) return { job_id: claim.job_id, cancelled: true, seq, claim };
+    }
+    await append({
+      v: 1,
+      _transport: 'smoke',
+      done: true,
+      ok: true,
+      job_id: claim.job_id,
+      session_id: sessionId ?? `sess-${workerId}`,
+      reply_message_id: replyMessageId ?? 7,
+      title: '冒烟测试会话',
+      mode: withTool ? 'DEEP_SEARCH' : 'DEFAULT',
+      search_triggered: Boolean(withTool),
+      token_usage: 128,
+      citations: [],
+    });
     await rpc('deepseek_complete', {
       p_job_id: claim.job_id,
       p_ok: true,
       p_metrics: { upstream_ttft_ms: 700, upstream_total_ms: Date.now() - started, transport: 'smoke' },
+      p_session_id: sessionId ?? `sess-${workerId}`,
+      p_reply_message_id: replyMessageId ?? 7,
     });
-    return { job_id: claim.job_id, seq, delivered: respondWith };
+    return { job_id: claim.job_id, seq, delivered: respondWith, claim };
   }
   return { error: 'never claimed' };
 }
@@ -137,6 +176,7 @@ try {
   const marker = `smoke-${Date.now()}`;
   const fileMarker = `file-secret-${Date.now()}`;
   const answerText = '收到，这是模拟通道的流式回答。';
+  const secondAnswer = '继续同一会话的回复';
 
   const drained = await drainDeepseekQueue('smoke-setup');
   check(`the deepseek queue starts empty (drained ${drained} stale job(s))`, true);
@@ -170,6 +210,7 @@ try {
   const httpErrors = [];
   const rpcCalls = [];
   page.on('pageerror', (err) => pageErrors.push(err.message));
+  if (process.env.SMOKE_CONSOLE) page.on('console', (m) => { if (/FINISH/.test(m.text())) console.log('[console]', m.text()); });
   page.on('response', (res) => {
     // config.js is optional by design; its 404 must not count as a failure.
     if (res.status() >= 400 && !res.url().endsWith('/config.js')) {
@@ -185,9 +226,11 @@ try {
     waitUntil: 'load',
   });
   await page.waitForTimeout(600);
+  const bogusStatus = (await page.textContent('#status-text')) || '';
+  check('a URL-hash override replaces the baked-in defaults', /未配置/.test(bogusStatus), bogusStatus);
   check(
-    'a URL-hash override replaces the baked-in defaults',
-    await page.isVisible('#view-settings.is-active'),
+    'an unconfigured visitor is never sent to the backend page',
+    !(await page.isVisible('#view-admin.is-active')) && !(await page.isVisible('.tab[data-view=admin]')),
     await page.textContent('#status-text'),
   );
 
@@ -212,7 +255,7 @@ try {
   await page.click('.cm-content');
   await page.keyboard.type(`第一行 ${marker}`);
   await page.fill('#entry-title', 'smoke title');
-  const transport = fakeTransport({ respondWith: answerText });
+  const transport = fakeTransport({ respondWith: answerText, sessionId: 'sess-smoke-1', replyMessageId: 7 });
   await page.click('#save-text');
   await page.waitForSelector('.entry__body', { timeout: 15_000 });
   const listed = await page.textContent('#entry-list');
@@ -240,6 +283,9 @@ try {
 
   // --- chat: queue, stream from a simulated transport, render latency
   await page.click('.tab[data-view=chat]');
+  const sessionLabel = (await page.textContent('#chat-session')) || '';
+  check('a fresh chat says it will open a new conversation', /新会话/.test(sessionLabel), sessionLabel);
+  check('the new-session button starts disabled', await page.isDisabled('#chat-new-session'), sessionLabel);
   await page.fill('#chat-input', '你好，测试一下');
   await page.click('#chat-send');
   await page.waitForSelector('.msg--assistant', { timeout: 10_000 });
@@ -270,28 +316,104 @@ try {
     },
     { timeout: 20_000 },
   );
+  // the transport's own timings land with the job's metrics, which can trail the last chunk
+  await page
+    .waitForFunction(() => /额外/.test(document.getElementById('chat-status')?.textContent || ''), { timeout: 15_000 })
+    .catch(() => {});
   const statusText = (await page.textContent('#chat-status')) || '';
   check('latency accounting is shown', /首字/.test(statusText) && /额外/.test(statusText), statusText);
   const metaText = (await page.textContent('.msg--assistant .msg__meta')) || '';
   check('the finished answer carries its metrics', /总/.test(metaText), metaText);
 
-  // --- chat: a second turn keeps the conversation
+  // --- chat: the turn's conversation ids land in the session bar
+  await page.waitForFunction(() => !/新会话/.test(document.getElementById('chat-session')?.textContent || ''), {
+    timeout: 20_000,
+  });
+  const afterTurn = (await page.textContent('#chat-session')) || '';
+  check('the session bar shows the live conversation', /1 轮/.test(afterTurn), afterTurn);
+  check(
+    'the answer is stored with the conversation for the next turn',
+    await page.evaluate(() => {
+      const raw = localStorage.getItem('tools.chat.session.v1');
+      if (!raw) return false;
+      const saved = JSON.parse(raw);
+      return Boolean(saved.dsSessionId) && saved.parentId === '7' && saved.turns.length >= 2;
+    }),
+    afterTurn,
+  );
+
+  // --- chat: a second turn continues the same conversation (the transport sees its ids)
+  const transport2 = fakeTransport({ respondWith: secondAnswer, sessionId: 'sess-continued', replyMessageId: 9, withTool: true });
   await page.fill('#chat-input', '第二句');
   await page.click('#chat-send');
   await page.waitForFunction(() => document.querySelectorAll('.msg--user').length >= 2, { timeout: 15_000 });
   const userCount = await page.locator('.msg--user').count();
   check('the conversation keeps earlier turns', userCount >= 2, `user messages: ${userCount}`);
+  const first = await transport;
+  const second = await transport2;
+  // turn 1 had no session when it was queued (the relay creates it), so the proof of
+  // continuation is turn 2 arriving with the id turn 1's answer produced.
+  check('the first turn is queued with no session id', !first.claim?.session_id, first.claim?.session_id);
+  check('the next turn is queued against the session the first turn created', second.claim?.session_id === 'sess-smoke-1', {
+    first: first.claim?.session_id,
+    second: second.claim?.session_id,
+  });
+  check('the queued turn carries the previous reply as its parent', second.claim?.parent_message_id === '7', second.claim);
+  await page.waitForFunction(
+    (expected) => Boolean(document.querySelector('.msg--assistant:last-of-type')?.textContent.includes(expected)),
+    secondAnswer,
+    { timeout: 25_000 },
+  );
+  check('the continued answer renders', true);
+  const chip = (await page.textContent('.chip--tool')) || '';
+  check('a tool-using turn shows a "已调用工具" chip', /已调用工具/.test(chip) && /网页搜索/.test(chip), chip);
 
-  // --- settings: health panel + worker snippet
-  await page.click('.tab[data-view=settings]');
+  // --- chat: 新会话 drops the conversation
+  await page.evaluate(() => {
+    window.confirm = () => true;
+  });
+  await page
+    .waitForFunction(() => !document.getElementById('chat-new-session')?.disabled, { timeout: 15_000 })
+    .catch(async () => {
+      const detail = await page.evaluate(() => ({
+        status: document.getElementById('chat-status')?.textContent,
+        send: document.getElementById('chat-send')?.disabled,
+        session: document.getElementById('chat-session')?.textContent,
+      }));
+      throw new Error(`the composer stayed busy: ${JSON.stringify(detail)}`);
+    });
+  await page.click('#chat-new-session');
+  await page.waitForFunction(() => document.querySelectorAll('.msg').length === 0, { timeout: 10_000 });
+  const clearedSession = (await page.textContent('#chat-session')) || '';
+  check('新会话 clears the transcript', /新会话 · 0 轮/.test(clearedSession), clearedSession);
+  check(
+    '新会话 drops the DeepSeek ids so the next turn starts over',
+    await page.evaluate(() => {
+      const raw = localStorage.getItem('tools.chat.session.v1');
+      if (!raw) return true;
+      const saved = JSON.parse(raw);
+      return !saved.dsSessionId && !saved.parentId && saved.turns.length === 0;
+    }),
+    clearedSession,
+  );
+
+  // --- backend page stays hidden until ?admin=1
+  check('the backend tab is hidden in the public site', !(await page.isVisible('.tab[data-view=admin]')), await page.textContent('.tabs'));
+  await page.goto(`${origin}index.html?admin=1`, { waitUntil: 'load' });
+  await page.waitForSelector('.tab[data-view=admin]:not([hidden])', { timeout: 10_000 });
+  check('?admin=1 reveals the backend tab', true);
+  await page.click('.tab[data-view=admin]');
   await page.waitForSelector('#health-kv dd', { timeout: 10_000 });
   const health = await page.textContent('#health-kv');
-  check('the settings panel reports backend health', /近 1 小时成功/.test(health), health);
-  await page.evaluate(() => navigator.clipboard.writeText('').catch(() => {}));
-  await page.click('#copy-worker');
-  await page.waitForFunction(() => /已复制/.test(document.getElementById('toast')?.textContent || ''), { timeout: 8_000 });
-  const toastText = (await page.textContent('#toast')) || '';
-  check('the worker snippet copies with a toast confirmation', /已复制/.test(toastText), toastText);
+  check('the backend page reports health', /近 1 小时成功/.test(health), health);
+  check('the credential box exists only there', await page.isVisible('#cred-input'), health);
+  check(
+    'the public chat page never shows the credential box',
+    !(await page.evaluate(() => Boolean(document.querySelector('#view-chat #cred-input')))),
+    health,
+  );
+  await page.goto(`${origin}index.html`, { waitUntil: 'load' });
+  await page.waitForSelector('#clipboard-gate', { timeout: 10_000 });
 
   // --- reload: the remembered token restores the session
   await page.reload({ waitUntil: 'load' });

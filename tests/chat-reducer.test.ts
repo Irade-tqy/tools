@@ -5,175 +5,223 @@ import {
   applyStatus,
   createChatState,
   describeLatency,
-  extractDelta,
   formatMs,
   latencyOf,
+  sourcesOf,
+  toolSummaryOf,
+  type ChunkPayload,
+  type ToolPayload,
 } from '../src/lib/chat-reducer';
 
-const chunk = (content: string, finish: string | null = null) => ({
-  choices: [{ delta: { content }, finish_reason: finish }],
-});
+const iso = (ms: number) => new Date(ms).toISOString();
 
-describe('extractDelta', () => {
-  it('concatenates content across choices', () => {
-    const delta = extractDelta({
-      choices: [
-        { delta: { content: 'a' } },
-        { delta: { content: 'b' } },
-      ],
-    });
-    expect(delta.content).toBe('ab');
-  });
-
-  it('separates reasoning from the answer', () => {
-    const delta = extractDelta({ choices: [{ delta: { content: 'hi', reasoning_content: 'thinking' } }] });
-    expect(delta).toMatchObject({ content: 'hi', reasoning: 'thinking' });
-  });
-
-  it('reads non-stream message payloads too', () => {
-    expect(extractDelta({ choices: [{ message: { content: 'whole' }, finish_reason: 'stop' }] })).toMatchObject({
-      content: 'whole',
-      finishReason: 'stop',
-    });
-  });
-
-  it('surfaces upstream errors in both shapes', () => {
-    expect(extractDelta({ error: 'boom' }).error).toBe('boom');
-    expect(extractDelta({ error: { message: 'bad key' } }).error).toBe('bad key');
-  });
+const tool = (overrides: Partial<ToolPayload> = {}): ToolPayload => ({
+  id: 2,
+  type: 'SEARCH',
+  status: 'WIP',
+  label: '搜索到 2 个网页',
+  queries: ['上海天气'],
+  results: [
+    { cite_index: 1, title: 'A', url: 'https://a', site_name: 'a.com', snippet: 'x' },
+    { cite_index: 2, title: 'B', url: 'https://b', site_name: 'b.com', snippet: 'y' },
+  ],
+  page: null,
+  ...overrides,
 });
 
 describe('applyChunk', () => {
-  it('assembles the answer and stamps time-to-first-token', () => {
+  it('concatenates answer deltas and stamps the first token', () => {
     const state = createChatState(1000);
-    applyChunk(state, 0, chunk('He'), 1200);
-    applyChunk(state, 1, chunk('llo'), 1300);
-    expect(state.text).toBe('Hello');
-    expect(state.firstTokenAt).toBe(1200);
+    applyChunk(state, 0, { text: '你' }, 1100);
+    applyChunk(state, 1, { text: '好' }, 1200);
+    expect(state.text).toBe('你好');
+    expect(state.firstTokenAt).toBe(1100);
     expect(state.done).toBe(false);
   });
 
-  it('drops duplicate and out-of-order seqs', () => {
-    const state = createChatState(0);
-    applyChunk(state, 0, chunk('once'), 1);
-    applyChunk(state, 0, chunk('once'), 2);
-    applyChunk(state, 1, chunk(' twice'), 3);
-    applyChunk(state, 1, chunk(' twice'), 4);
-    expect(state.text).toBe('once twice');
-    expect(state.lastSeq).toBe(1);
+  it('keeps reasoning separate from the answer', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { thinking: '先算 9.11 …' }, 1);
+    applyChunk(state, 1, { text: '9.11 更大' }, 2);
+    expect(state.reasoning).toBe('先算 9.11 …');
+    expect(state.text).toBe('9.11 更大');
   });
 
-  it('finishes on finish_reason', () => {
-    const state = createChatState(0);
-    applyChunk(state, 0, chunk('done', 'stop'), 50);
+  it('drops redelivered chunks (realtime can replay, sse races the poller)', () => {
+    const state = createChatState();
+    applyChunk(state, 3, { text: 'a' });
+    applyChunk(state, 2, { text: 'IGNORED' });
+    applyChunk(state, 3, { text: 'IGNORED' });
+    expect(state.text).toBe('a');
+  });
+
+  it('ends the turn on an error chunk', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { error: 'upstream HTTP 401' }, 50);
     expect(state.done).toBe(true);
+    expect(state.error).toContain('401');
     expect(state.finishedAt).toBe(50);
-    expect(state.status).toBe('done');
   });
 
-  it('treats an upstream error as terminal', () => {
-    const state = createChatState(0);
-    applyChunk(state, 0, { error: { message: 'quota' } }, 10);
-    expect(state.error).toBe('quota');
+  it('records the conversation ids that let the next turn continue', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { text: 'hi' }, 1);
+    applyChunk(
+      state,
+      1,
+      {
+        done: true,
+        ok: true,
+        session_id: 'sess-9',
+        reply_message_id: 42,
+        title: '天气问题',
+        mode: 'DEEP_SEARCH',
+        search_triggered: true,
+        token_usage: 243,
+        citations: [{ marker: 'citation:1', kind: 'citation', index: 1, resolved: true, title: 'A', url: 'https://a', site_name: 'a.com' }],
+      },
+      900,
+    );
     expect(state.done).toBe(true);
+    expect(state.sessionId).toBe('sess-9');
+    expect(state.replyMessageId).toBe('42');
+    expect(state.title).toBe('天气问题');
+    expect(state.mode).toBe('DEEP_SEARCH');
+    expect(state.searchTriggered).toBe(true);
+    expect(state.tokenUsage).toBe(243);
+    expect(state.citations).toHaveLength(1);
   });
 
-  it('records the transport tag', () => {
-    const state = createChatState(0);
-    applyChunk(state, 0, { ...chunk('x'), _transport: 'edge-api' }, 1);
-    expect(state.transport).toBe('edge-api');
+  it('marks a failed done payload as an error turn', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { done: true, ok: false, error: 'HTTP 401' }, 1);
+    expect(state.status).toBe('error');
+    expect(state.error).toBe('HTTP 401');
   });
 
-  it('keeps usage when the upstream sends it', () => {
-    const state = createChatState(0);
-    applyChunk(state, 0, { choices: [], usage: { total_tokens: 42 } }, 1);
-    expect(state.usage).toEqual({ total_tokens: 42 });
+  it('upserts tools without losing results a later frame omits', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { tool: tool() });
+    applyChunk(state, 1, { tool: tool({ status: 'FINISHED', results: [] }) });
+    expect(state.tools).toHaveLength(1);
+    expect(state.tools[0]?.status).toBe('FINISHED');
+    expect(state.tools[0]?.results).toHaveLength(2);
   });
 });
 
 describe('applyStatus', () => {
-  it('merges metrics and chunks from a poll response', () => {
-    const state = createChatState(0);
+  it('merges metrics, chunks and the session ids stored server-side', () => {
+    const state = createChatState();
     applyStatus(state, {
-      status: 'streaming',
-      metrics: { upstream_ttft_ms: 900, claimed_at: new Date(100).toISOString() },
-      chunks: [{ seq: 0, payload: chunk('po') }, { seq: 1, payload: chunk('ng', 'stop') }],
-    }, 500);
-    expect(state.text).toBe('pong');
+      status: 'done',
+      finished: true,
+      metrics: { upstream_ttft_ms: 600, claimed_at: new Date(1200).toISOString() },
+      session_id: 'sess-1',
+      reply_message_id: '7',
+      chunks: [
+        { seq: 0, payload: { text: 'partial' } as ChunkPayload },
+        { seq: 1, payload: { done: true, ok: true } as ChunkPayload },
+      ],
+    });
+    expect(state.text).toBe('partial');
     expect(state.done).toBe(true);
-    expect(state.metrics.upstream_ttft_ms).toBe(900);
+    expect(state.sessionId).toBe('sess-1');
+    expect(state.replyMessageId).toBe('7');
+    expect(latencyOf(state, 2000).upstreamTtftMs).toBe(600);
   });
 
-  it('marks finished snapshots done even with no chunks', () => {
-    const state = createChatState(0);
-    applyStatus(state, { status: 'done', finished: true }, 77);
+  it('keeps an error message from the job row', () => {
+    const state = createChatState();
+    applyStatus(state, { status: 'error', error: 'credential expired', finished: true });
+    expect(state.error).toContain('expired');
     expect(state.done).toBe(true);
-    expect(state.finishedAt).toBe(77);
+  });
+});
+
+describe('tool summary', () => {
+  it('labels tools and counts results for the "已调用工具" chip', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { tool: tool() });
+    applyChunk(state, 1, { tool: tool({ id: 3, type: 'TOOL_OPEN', results: [], label: '', queries: [], page: { url: 'https://a', title: 'A' } }) });
+    const summary = toolSummaryOf(state);
+    expect(summary.used).toBe(true);
+    expect(summary.kinds).toEqual(['网页搜索 · 2 个结果', '打开页面']);
+    expect(summary.queries).toEqual(['上海天气']);
+    expect(summary.resultCount).toBe(2);
+    expect(summary.pages).toEqual([{ url: 'https://a', title: 'A' }]);
+  });
+
+  it('reports no tools for a plain answer', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { text: 'hi' });
+    expect(toolSummaryOf(state).used).toBe(false);
+  });
+
+  it('dedupes sources across citations and tool results', () => {
+    const state = createChatState();
+    applyChunk(state, 0, { tool: tool() });
+    applyChunk(state, 1, {
+      citations: [
+        { marker: 'citation:1', kind: 'citation', index: 1, resolved: true, title: 'A', url: 'https://a', site_name: 'a.com' },
+        { marker: 'citation:9', kind: 'citation', index: 9, resolved: false, title: '', url: '', site_name: '' },
+      ],
+      done: true,
+      ok: true,
+    });
+    const sources = sourcesOf(state);
+    expect(sources.map((s) => s.url)).toEqual(['https://a', 'https://b']);
   });
 });
 
 describe('latency accounting', () => {
-  it('computes ttft, queue and added latency against the 5s budget', () => {
-    const state = createChatState(0);
-    state.metrics = { upstream_ttft_ms: 1200, claimed_at: new Date(300).toISOString() };
-    applyChunk(state, 0, chunk('hi'), 1800);
-    const report = latencyOf(state, 5000);
-    expect(report.ttftMs).toBe(1800);
+  it('measures our ttft, the queue wait and the overhead over upstream', () => {
+    const state = createChatState(1000);
+    applyStatus(state, { status: 'streaming', metrics: { claimed_at: iso(1300), upstream_ttft_ms: 500 } });
+    applyChunk(state, 0, { text: 'a' }, 1600);
+    applyChunk(state, 1, { done: true, ok: true }, 2600);
+
+    const report = latencyOf(state, 3000);
+    expect(report.ttftMs).toBe(600);
     expect(report.queueMs).toBe(300);
-    expect(report.upstreamTtftMs).toBe(1200);
-    expect(report.addedMs).toBe(600);
+    expect(report.upstreamTtftMs).toBe(500);
+    expect(report.addedMs).toBe(100);
     expect(report.withinBudget).toBe(true);
+    expect(report.totalMs).toBe(1600);
   });
 
-  it('flags an over-budget stream', () => {
+  it('flags a turn that exceeds the 5s budget', () => {
     const state = createChatState(0);
-    state.metrics = { upstream_ttft_ms: 1000 };
-    applyChunk(state, 0, chunk('hi'), LATENCY_BUDGET_MS + 1001);
-    const report = latencyOf(state);
-    expect(report.addedMs).toBe(5001);
-    expect(report.withinBudget).toBe(false);
+    applyStatus(state, { metrics: { upstream_ttft_ms: 500 } });
+    applyChunk(state, 0, { text: 'a' }, LATENCY_BUDGET_MS + 5000 + 1);
+    expect(latencyOf(state).withinBudget).toBe(false);
   });
 
-  it('stays null until upstream timings exist', () => {
+  it('reports no budget verdict before upstream timings exist', () => {
     const state = createChatState(0);
-    applyChunk(state, 0, chunk('hi'), 100);
+    applyChunk(state, 0, { text: 'a' }, 100);
     const report = latencyOf(state);
     expect(report.upstreamTtftMs).toBeNull();
-    expect(report.addedMs).toBeNull();
     expect(report.withinBudget).toBeNull();
-  });
-
-  it('parses numeric-string metrics', () => {
-    const state = createChatState(0);
-    state.metrics = { upstream_ttft_ms: '800' };
-    applyChunk(state, 0, chunk('x'), 1300);
-    expect(latencyOf(state).addedMs).toBe(500);
-  });
-
-  it('total keeps growing until the stream finishes', () => {
-    const state = createChatState(0);
-    expect(latencyOf(state, 250).totalMs).toBe(250);
-    applyChunk(state, 0, chunk('x', 'stop'), 400);
-    expect(latencyOf(state, 900).totalMs).toBe(400);
   });
 });
 
 describe('formatting', () => {
-  it('formats milliseconds readably', () => {
+  it('formats durations', () => {
     expect(formatMs(null)).toBe('—');
-    expect(formatMs(812)).toBe('812ms');
-    expect(formatMs(1812)).toBe('1.81s');
-    expect(formatMs(42_000)).toBe('42.0s');
+    expect(formatMs(940)).toBe('940ms');
+    expect(formatMs(2500)).toBe('2.50s');
+    expect(formatMs(65_000)).toBe('65.0s');
   });
 
-  it('describes a finished answer for the status line', () => {
+  it('describes a finished turn including token usage', () => {
     const state = createChatState(0);
-    state.transport = 'browser';
-    state.metrics = { upstream_ttft_ms: 1000 };
-    applyChunk(state, 0, chunk('hi', 'stop'), 1500);
+    applyStatus(state, { metrics: { claimed_at: iso(100), upstream_ttft_ms: 400 } });
+    applyChunk(state, 0, { text: 'a' }, 700);
+    applyChunk(state, 1, { done: true, ok: true, token_usage: 120 }, 1500);
     const text = describeLatency(state);
-    expect(text).toContain('首字 1.50s');
-    expect(text).toContain('额外 500ms');
-    expect(text).toContain('通道 browser');
+    expect(text).toContain('首字 700ms');
+    expect(text).toContain('排队 100ms');
+    expect(text).toContain('额外 300ms');
+    expect(text).toContain('120 tokens');
   });
 });

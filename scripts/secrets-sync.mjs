@@ -7,7 +7,9 @@
 import { env, projectRef, requireEnv } from './lib.mjs';
 
 const KEYS = [
-  'DEEPSEEK_API_KEY',
+  'TOOLS_ADMIN_TOKEN',
+  'DEEPSEEK_CREDENTIAL',
+  'DEEPSEEK_WEB_TOKEN',
   'DEEPSEEK_WEB_COOKIE',
   'DEEPSEEK_API_URL',
   'DEEPSEEK_EXTRA_HEADERS',
@@ -24,7 +26,7 @@ const missing = KEYS.filter((key) => !(env[key] || '').trim());
 console.log(`project: ${projectRef}`);
 for (const key of present) {
   const value = env[key].trim();
-  const shown = key === 'DEEPSEEK_API_URL' || key === 'DEEPSEEK_EXTRA_HEADERS' || key === 'DEEPSEEK_USER_AGENT'
+  const shown = key === 'DEEPSEEK_API_URL' || key === 'DEEPSEEK_EXTRA_HEADERS' || key === 'DEEPSEEK_USER_AGENT' || key === 'TOOLS_ADMIN_TOKEN'
     ? value
     : `${value.slice(0, 6)}…${value.slice(-4)} (${value.length} chars)`;
   console.log(`  set   ${key} = ${shown}`);
@@ -34,7 +36,7 @@ for (const key of missing) console.log(`  unset ${key}`);
 if (listOnly) process.exit(0);
 
 if (!present.length) {
-  console.error('\nnothing to push — add DEEPSEEK_API_KEY or DEEPSEEK_WEB_COOKIE to .env.local');
+  console.error('\nnothing to push — add TOOLS_ADMIN_TOKEN / DEEPSEEK_CREDENTIAL to .env.local');
   process.exit(1);
 }
 

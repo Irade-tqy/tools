@@ -2,7 +2,7 @@
 // dependency-free for data calls (fetch only); supabase-js is used solely for Realtime.
 
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
-import type { Config } from './config';
+import type { Config, ModelType } from './config';
 
 export type Envelope = Record<string, unknown> & { ok: boolean; error?: string | null };
 
@@ -40,24 +40,6 @@ export interface EntryMeta {
   expires_at: string;
 }
 
-export interface JobStatus extends Envelope {
-  job_id?: string;
-  status?: 'queued' | 'claimed' | 'streaming' | 'done' | 'error' | 'cancelled';
-  transport?: string | null;
-  metrics?: Record<string, string | number>;
-  error?: string | null;
-  finished?: boolean;
-  chunks?: { seq: number; payload: Record<string, unknown>; created_at: string }[];
-}
-
-export interface Health extends Envelope {
-  pending?: number;
-  queued?: number;
-  workers_alive?: number;
-  done_last_hour?: number;
-  error_last_hour?: number;
-}
-
 export interface PutFileInput {
   fileName: string;
   fileType: string;
@@ -67,9 +49,76 @@ export interface PutFileInput {
   title?: string;
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+export interface AskInput {
+  prompt: string;
+  /** DeepSeek chat_session_id — omit to start a new conversation */
+  sessionId?: string | null;
+  /** previous response_message_id — the parent of this turn */
+  parentId?: string | null;
+  modelType?: ModelType;
+  thinking?: boolean;
+  search?: boolean;
+}
+
+export interface AskResult extends Envelope {
+  job_id?: string;
+  status?: string;
+  session_id?: string | null;
+  error?: string | null;
+  retry_after_seconds?: number;
+}
+
+export interface JobStatus extends Envelope {
+  job_id?: string;
+  status?: 'queued' | 'claimed' | 'streaming' | 'done' | 'error' | 'cancelled';
+  transport?: string | null;
+  metrics?: Record<string, string | number>;
+  error?: string | null;
+  finished?: boolean;
+  prompt?: string | null;
+  session_id?: string | null;
+  parent_message_id?: string | null;
+  reply_message_id?: string | null;
+  title?: string | null;
+  model_type?: string | null;
+  chunks?: { seq: number; payload: Record<string, unknown>; created_at: string }[];
+}
+
+export interface Health extends Envelope {
+  pending?: number;
+  queued?: number;
+  workers_alive?: number;
+  done_last_hour?: number;
+  error_last_hour?: number;
+  median_ttft_ms?: number | null;
+  credential_configured?: boolean;
+  credential_age_minutes?: string | number;
+  credential_error?: string;
+  transport?: string;
+  admin_enabled?: boolean;
+}
+
+export interface CredentialStatus extends Envelope {
+  configured?: boolean;
+  token_hint?: string;
+  has_device_id?: boolean;
+  has_cookie?: boolean;
+  source?: string;
+  note?: string;
+  updated_at?: string;
+  age_minutes?: number;
+  last_ok_at?: string | null;
+  last_error?: string | null;
+}
+
+export interface CredentialSetResult extends Envelope {
+  source?: string;
+  fingerprint?: string;
+  has_device_id?: boolean;
+  has_cookie?: boolean;
+  warnings?: string[];
+  canonical?: string;
+  updated_at?: string;
 }
 
 export class ToolsApi {
@@ -141,7 +190,11 @@ export class ToolsApi {
 
   // --- clipboard -----------------------------------------------------------
   verify(password: string, ttlSeconds = 3600) {
-    return this.rpc<VerifyResult>('clipboard_verify', { p_password: password, p_ttl_seconds: ttlSeconds }, { token: null });
+    return this.rpc<VerifyResult>(
+      'clipboard_verify',
+      { p_password: password, p_ttl_seconds: ttlSeconds },
+      { token: null },
+    );
   }
   status() {
     return this.rpc<Envelope & Record<string, number>>('clipboard_status');
@@ -174,10 +227,15 @@ export class ToolsApi {
   }
 
   // --- deepseek ------------------------------------------------------------
-  enqueue(messages: ChatMessage[], model?: string) {
-    return this.rpc<Envelope & { job_id?: string }>('deepseek_enqueue', {
-      p_messages: messages,
-      p_model: model ?? this.cfg.model,
+  /** Queue one turn. Pass session ids to continue a conversation, omit them to start one. */
+  ask(input: AskInput) {
+    return this.rpc<AskResult>('deepseek_ask', {
+      p_prompt: input.prompt,
+      p_session_id: input.sessionId ?? null,
+      p_parent_message_id: input.parentId ? Number(input.parentId) : null,
+      p_model_type: input.modelType ?? this.cfg.modelType,
+      p_thinking: Boolean(input.thinking),
+      p_search: Boolean(input.search),
     });
   }
   jobStatus(jobId: string, sinceSeq = -1) {
@@ -190,29 +248,10 @@ export class ToolsApi {
     return this.rpc<Health>('deepseek_health');
   }
 
-  // Transport side (used by public/deepseek-worker.js and the edge function).
-  claim(workerId: string) {
-    return this.rpc<Envelope & { claimed?: boolean; job_id?: string; messages?: ChatMessage[]; model?: string }>(
-      'deepseek_claim',
-      { p_worker_id: workerId },
-    );
-  }
-  appendChunk(jobId: string, seq: number, payload: unknown) {
-    return this.rpc<Envelope>('deepseek_append', { p_job_id: jobId, p_seq: seq, p_payload: payload });
-  }
-  completeJob(jobId: string, ok: boolean, error?: string, metrics?: Record<string, unknown>) {
-    return this.rpc<Envelope>('deepseek_complete', {
-      p_job_id: jobId,
-      p_ok: ok,
-      p_error: error ?? null,
-      p_metrics: metrics ?? {},
-    });
-  }
-
   // --- edge function -------------------------------------------------------
   // Returns the raw Response so the caller can stream the SSE body.
-  callEdgeFunction(name: string, body: unknown, signal?: AbortSignal): Promise<Response> {
-    return fetch(`${this.cfg.url}/functions/v1/${name}`, {
+  callEdgeFunction(body: unknown, signal?: AbortSignal): Promise<Response> {
+    return fetch(`${this.cfg.url}/functions/v1/${this.cfg.functionName}`, {
       method: 'POST',
       headers: {
         apikey: this.cfg.anonKey,
@@ -222,6 +261,21 @@ export class ToolsApi {
       body: JSON.stringify(body),
       signal,
     });
+  }
+
+  /** Hidden admin page: paste one credential string, the relay parses + verifies + stores it. */
+  async credentialSet(credential: string, adminToken: string, verify = true): Promise<CredentialSetResult> {
+    const res = await this.callEdgeFunction({ action: 'credential_set', credential, admin_token: adminToken, verify });
+    const body = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as CredentialSetResult;
+    if (!res.ok && body.ok !== false) return { ok: false, error: `HTTP ${res.status}` };
+    return body;
+  }
+
+  async credentialStatus(adminToken: string): Promise<CredentialStatus> {
+    const res = await this.callEdgeFunction({ action: 'credential_status', admin_token: adminToken });
+    const body = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as CredentialStatus;
+    if (!res.ok && body.ok !== false) return { ok: false, error: `HTTP ${res.status}` };
+    return body;
   }
 
   // --- realtime ------------------------------------------------------------
@@ -250,18 +304,16 @@ export class ToolsApi {
     try {
       channel = client
         .channel(`job-${jobId}`)
-        .on('postgres_changes', {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'deepseek_chunk',
-          filter: `job_id=eq.${jobId}`,
-        }, (payload) => handlers.onChunk(payload.new as never))
-        .on('postgres_changes', {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'deepseek_job',
-          filter: `id=eq.${jobId}`,
-        }, (payload) => handlers.onJob?.(payload.new as never))
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'deepseek_chunk', filter: `job_id=eq.${jobId}` },
+          (payload) => handlers.onChunk(payload.new as never),
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'deepseek_job', filter: `id=eq.${jobId}` },
+          (payload) => handlers.onJob?.(payload.new as never),
+        )
         .subscribe((status, err) => {
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') handlers.onError?.(err ?? status);
         });

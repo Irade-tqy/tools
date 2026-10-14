@@ -1,36 +1,42 @@
-// Runtime configuration. The repo is public, so the Supabase URL and anon key are never
-// baked into the bundle: they come from (in order) a git-ignored ./config.js next to
-// index.html, the URL hash, or localStorage entered by the user on first visit.
+// Runtime configuration. The Supabase URL, anon key and function name are baked into the
+// bundle (scripts/defaults-sync.mjs) because they are public client values — Row Level
+// Security is the actual boundary — so the deployed site needs zero setup. The layers below
+// only exist for self-hosting and for the hidden admin page:
+//   baked defaults → localStorage → ./config.js → the URL hash.
 
 import {
-  DEFAULT_MODEL,
+  DEFAULT_FUNCTION_NAME,
+  DEFAULT_MODEL_TYPE,
   DEFAULT_SUPABASE_ANON_KEY,
   DEFAULT_SUPABASE_URL,
 } from './defaults';
 
-export type Transport = 'auto' | 'edge' | 'browser';
+export type ModelType = 'default' | 'expert' | 'vision';
+
+export const MODEL_TYPES: { value: ModelType; label: string; hint: string }[] = [
+  { value: 'default', label: '默认', hint: '快速回答' },
+  { value: 'expert', label: '专家', hint: '深度推理，可能调用搜索工具' },
+  { value: 'vision', label: '视觉', hint: '可理解图片' },
+];
 
 export interface Config {
   url: string;
   anonKey: string;
-  model: string;
-  transport: Transport;
+  functionName: string;
+  modelType: ModelType;
 }
 
 export const CONFIG_KEY = 'tools.config.v1';
 export const TOKEN_KEY = 'tools.clipboard.token.v1';
+export const ADMIN_TOKEN_KEY = 'tools.admin.token.v1';
+export const SESSION_KEY = 'tools.chat.session.v1';
 
 declare global {
   interface Window {
-    // Optional ./config.js escape hatch for self-hosted deployments.
+    /** Optional ./config.js escape hatch for self-hosted deployments. */
     TOOLS_CONFIG?: Partial<Config>;
   }
 }
-
-const DEFAULTS: Pick<Config, 'model' | 'transport'> = {
-  model: DEFAULT_MODEL,
-  transport: 'auto',
-};
 
 export function normalizeUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, '');
@@ -53,7 +59,14 @@ export function projectRef(raw: string): string {
   }
 }
 
-// `#supabase=https://x.supabase.co&anon=eyJ…&model=deepseek-chat&transport=edge`
+export function isModelType(value: unknown): value is ModelType {
+  return value === 'default' || value === 'expert' || value === 'vision';
+}
+
+/**
+ * `#supabase=https://x.supabase.co&anon=eyJ…&function=deepseek-chat&model=expert`
+ * The same hash also carries routing (`#view=chat`), and `#admin=1` unlocks the backend page.
+ */
 export function parseHashConfig(hash: string): Partial<Config> {
   const out: Partial<Config> = {};
   const raw = hash.startsWith('#') ? hash.slice(1) : hash;
@@ -61,18 +74,27 @@ export function parseHashConfig(hash: string): Partial<Config> {
   const params = new URLSearchParams(raw);
   const url = params.get('supabase') || params.get('url');
   const anon = params.get('anon') || params.get('key');
+  const fn = params.get('function') || params.get('fn');
   const model = params.get('model');
-  const transport = params.get('transport');
   if (url) out.url = normalizeUrl(url);
   if (anon) out.anonKey = anon.trim();
-  if (model) out.model = model;
-  if (transport === 'auto' || transport === 'edge' || transport === 'browser') out.transport = transport;
+  if (fn) out.functionName = fn.trim();
+  if (isModelType(model)) out.modelType = model;
   return out;
 }
 
-function readStored(): Partial<Config> {
+/** `?admin=1` (query) or `#admin=1` (hash) reveals the backend page. */
+export function isAdminMode(search = location.search, hash = location.hash): boolean {
+  const flag = (value: string) => {
+    const raw = value.startsWith('#') ? value.slice(1) : value;
+    return new URLSearchParams(raw).get('admin') === '1';
+  };
+  return flag(search) || flag(hash);
+}
+
+function readStored(key: string): Partial<Config> {
   try {
-    const raw = localStorage.getItem(CONFIG_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === 'object' ? (parsed as Partial<Config>) : {};
@@ -94,18 +116,15 @@ function merge(...parts: Array<Partial<Config> | undefined>): Config {
   return {
     url: flat.url ? normalizeUrl(flat.url) : '',
     anonKey: flat.anonKey ?? '',
-    model: flat.model || DEFAULTS.model,
-    transport: flat.transport ?? DEFAULTS.transport,
+    functionName: flat.functionName || DEFAULT_FUNCTION_NAME,
+    modelType: isModelType(flat.modelType) ? flat.modelType : DEFAULT_MODEL_TYPE,
   };
 }
 
 export function loadConfig(hash = ''): Config {
-  // Lowest → highest: baked-in defaults, localStorage, ./config.js, the URL hash.
-  // The URL and anon key are public values (RLS is the real boundary), so the deployed
-  // site works with zero setup; the other layers let a self-hosted project override them.
   return merge(
-    { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY },
-    readStored(),
+    { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, functionName: DEFAULT_FUNCTION_NAME },
+    readStored(CONFIG_KEY),
     window.TOOLS_CONFIG,
     parseHashConfig(hash),
   );
@@ -113,8 +132,8 @@ export function loadConfig(hash = ''): Config {
 
 /**
  * Optional self-hosting escape hatch: a git-ignored ./config.js next to index.html may set
- * `window.TOOLS_CONFIG = { url, anonKey }`. Loaded at runtime (never bundled), so the
- * public repo stays free of credentials and a missing file is not a build error.
+ * `window.TOOLS_CONFIG = { url, anonKey }`. Loaded at runtime (never bundled), so the public
+ * repo stays free of credentials and a missing file is not a build error.
  */
 export function loadRuntimeConfigFile(timeoutMs = 1500): Promise<Partial<Config> | undefined> {
   return new Promise((resolve) => {
@@ -130,7 +149,7 @@ export function loadRuntimeConfigFile(timeoutMs = 1500): Promise<Partial<Config>
 }
 
 export function isConfigured(cfg: Config): boolean {
-  return isValidUrl(cfg.url) && cfg.anonKey.length > 20;
+  return isValidUrl(cfg.url) && cfg.anonKey.length > 20 && Boolean(cfg.functionName);
 }
 
 export function saveConfig(cfg: Config): void {
@@ -145,6 +164,24 @@ export function clearConfig(): void {
   try {
     localStorage.removeItem(CONFIG_KEY);
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadAdminToken(): string {
+  try {
+    return localStorage.getItem(ADMIN_TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveAdminToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    else localStorage.removeItem(ADMIN_TOKEN_KEY);
   } catch {
     /* ignore */
   }

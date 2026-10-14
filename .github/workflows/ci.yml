@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Generated files are up to date
+        run: npm run check:generated
       - name: Typecheck + build
         run: npm run build
       - name: Unit tests

@@ -1,79 +1,136 @@
-// DeepSeek chat view: enqueue a job, then render the stream from whichever transport
-// answers first (edge function SSE, Realtime rows, or a polling fallback). All three feed
-// the same reducer, which dedupes by seq, so nothing renders twice.
+// DeepSeek chat view.
+//
+// One turn = one prompt plus the two ids that place it in a conversation (chat_session_id,
+// parent_message_id). DeepSeek keeps the history, so continuing means passing them back and
+// "新会话" means dropping them. The answer arrives over the Edge Function's SSE, Realtime, or
+// a polling fallback — all three feed the same reducer, which dedupes by seq.
 
-import type { ChatMessage, ToolsApi } from '../lib/api';
+import type { ToolsApi } from '../lib/api';
 import {
   applyChunk,
   applyStatus,
   createChatState,
   describeLatency,
   latencyOf,
+  toolSummaryOf,
   type ChatState,
   type ChunkPayload,
 } from '../lib/chat-reducer';
+import { isModelType } from '../lib/config';
 import { $, on, setStatus, toast } from '../lib/dom';
-import { messageNode } from '../lib/render';
+import { applyAssistantModel, assistantNode, messageNode } from '../lib/render';
 import { readSse, SSE_DONE, type SseEvent } from '../lib/sse';
+import {
+  clearSession,
+  loadSession,
+  newSession,
+  saveSession,
+  sessionLabel,
+  type ChatSession,
+} from '../lib/session';
 
 const POLL_INTERVAL_MS = 400;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface ChatView {
   send(text: string): Promise<void>;
   stop(): Promise<void>;
   refreshHealth(): Promise<void>;
+  startNewSession(): void;
+  currentSession(): ChatSession;
 }
 
-/** One SSE payload from the edge function: a DeepSeek chunk plus its seq. */
-type SseLine = ChunkPayload & { seq?: number };
-
-export function initChat(api: ToolsApi, getConfig: () => { model: string; transport: string }): ChatView {
+export function initChat(api: ToolsApi): ChatView {
   const log = $('chat-log');
   const form = $('chat-form') as HTMLFormElement;
   const input = $('chat-input') as HTMLTextAreaElement;
   const statusLine = $('chat-status');
   const sendButton = $('chat-send') as HTMLButtonElement;
   const stopButton = $('chat-stop') as HTMLButtonElement;
+  const sessionLine = $('chat-session');
+  const newSessionButton = $('chat-new-session') as HTMLButtonElement;
+  const modelSelect = $('chat-model') as HTMLSelectElement;
+  const thinkingBox = $('chat-thinking') as HTMLInputElement;
+  const searchBox = $('chat-search') as HTMLInputElement;
 
-  const history: ChatMessage[] = [];
+  let session: ChatSession = loadSession();
   let state: ChatState | null = null;
-  let assistantNode: HTMLElement | null = null;
+  let assistant: HTMLElement | null = null;
   let unsubscribe: (() => void) | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let abortController: AbortController | null = null;
   let sseSeq = 0;
+  let finishing = false;
+  // The answer can finish before the job does: the last chunk carries the conversation ids,
+  // and the job row carries them only once the transport has completed the job. So the poll
+  // loop is gated on the *job*, never on the rendered answer.
+  let jobFinished = false;
+
+  // --- rendering -----------------------------------------------------------
 
   function renderAssistant() {
     if (!state) return;
-    if (!assistantNode) {
-      assistantNode = messageNode('assistant', '');
-      log.append(assistantNode);
+    if (!assistant) {
+      assistant = assistantNode({ text: '', thinking: '', tools: null, meta: '', error: null });
+      log.append(assistant);
     }
-    const body = assistantNode.firstElementChild;
-    if (body) body.textContent = (state.reasoning ? `${state.reasoning}\n\n` : '') + state.text || '…';
+    applyAssistantModel(assistant, {
+      text: state.text,
+      thinking: state.reasoning,
+      tools: state.tools.length || state.searchTriggered ? toolSummaryOf(state) : null,
+      meta: state.done ? describeLatency(state) : '',
+      error: state.error,
+    });
     log.scrollTop = log.scrollHeight;
   }
 
   function renderStatus() {
     if (!state) return;
-    const parts = [state.error ? `错误：${state.error}` : `状态：${state.status}`];
-    parts.push(describeLatency(state));
+    const parts: string[] = [];
+    if (state.error) parts.push(`错误：${state.error}`);
+    else if (!state.done) parts.push(`状态：${state.status}`);
+    if (state.done) parts.push(describeLatency(state));
+    else if (state.text || state.reasoning) parts.push('生成中…');
     statusLine.textContent = parts.join(' · ');
-    if (assistantNode) {
-      let meta = assistantNode.querySelector('.msg__meta');
-      if (!meta) {
-        meta = document.createElement('div');
-        meta.className = 'msg__meta';
-        assistantNode.append(meta);
-      }
-      meta.textContent = state.done ? describeLatency(state) : '';
+  }
+
+  function renderSession() {
+    sessionLine.textContent = sessionLabel(session);
+    sessionLine.title = session.dsSessionId ? `DeepSeek 会话 ${session.dsSessionId}` : '下一条消息会新建一个 DeepSeek 会话';
+    newSessionButton.disabled = !session.turns.length;
+  }
+
+  function renderTranscript() {
+    log.textContent = '';
+    if (!session.turns.length) {
+      const hint = document.createElement('p');
+      hint.className = 'muted';
+      hint.textContent = '向 DeepSeek 提问。同一个会话里可以继续追问，点“新会话”会重新开始。';
+      log.append(hint);
+      return;
     }
+    for (const turn of session.turns) {
+      if (turn.role === 'user') {
+        log.append(messageNode('user', turn.content));
+        continue;
+      }
+      log.append(
+        assistantNode({
+          text: turn.content,
+          thinking: turn.thinking ?? '',
+          tools: turn.tools ?? null,
+          meta: '',
+          error: null,
+        }),
+      );
+    }
+    log.scrollTop = log.scrollHeight;
   }
 
   function setBusy(busy: boolean) {
     sendButton.disabled = busy;
     stopButton.hidden = !busy;
-    input.disabled = false;
+    newSessionButton.disabled = busy || !session.turns.length;
   }
 
   function teardown() {
@@ -85,15 +142,56 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     abortController = null;
   }
 
-  function finish(reason?: string) {
+  /** Record the turn and hand the conversation ids back to the session. */
+  function commitTurn() {
     if (!state) return;
+    if (state.sessionId) session.dsSessionId = state.sessionId;
+    if (state.replyMessageId) session.parentId = state.replyMessageId;
+    if (state.title) session.title = state.title;
+    if (state.text) {
+      session.turns.push({
+        role: 'assistant',
+        content: state.text,
+        thinking: state.reasoning || undefined,
+        tools: state.tools.length || state.searchTriggered ? toolSummaryOf(state) : undefined,
+        mode: state.mode || undefined,
+        at: Date.now(),
+      });
+    }
+    saveSession(session);
+    renderSession();
+  }
+
+  async function finish(reason?: string) {
+    if (!state || finishing) return;
+    finishing = true;
+    // Realtime delivers the job UPDATE on a different channel than the chunk INSERTs, so a job
+    // can look finished before the last chunks — and the conversation ids, title and upstream
+    // timings live in those last frames. The job row only reaches a terminal status once the
+    // transport has completed it, so poll until it does, then commit.
+    jobFinished = true;
+    if (state.jobId) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        try {
+          const res = await api.jobStatus(state.jobId, state.lastSeq);
+          if (!res.ok) break;
+          applyStatus(state, res);
+          if (res.finished) break;
+        } catch {
+          break; // keep whatever we already streamed
+        }
+        await sleep(150);
+      }
+    }
     state.done = true;
     state.finishedAt = state.finishedAt ?? Date.now();
     if (reason) state.error = reason;
     teardown();
+    commitTurn();
     setBusy(false);
     renderAssistant();
     renderStatus();
+
     const report = latencyOf(state);
     if (report.ttftMs !== null) {
       setStatus(
@@ -103,22 +201,27 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
         report.withinBudget === false ? 'warn' : 'ok',
       );
     }
-    if (state.text) history.push({ role: 'assistant', content: state.text });
+    finishing = false;
   }
 
+  // --- transports ----------------------------------------------------------
+
   function pump() {
-    // Poll fallback: covers the case where Realtime is unavailable (blocked websocket,
-    // table not in the publication) and the edge function is not configured.
-    if (!state?.jobId || !state || state.done) return;
+    // Poll fallback: covers Realtime being unavailable (blocked websocket, table missing
+    // from the publication) and the SSE connection dropping mid-stream.
+    if (!state?.jobId || jobFinished) return;
     pollTimer = setTimeout(async () => {
-      if (!state?.jobId || state.done) return;
+      if (!state?.jobId || jobFinished) return;
       try {
         const res = await api.jobStatus(state.jobId, state.lastSeq);
         if (res.ok) {
           applyStatus(state, res);
           renderAssistant();
           renderStatus();
-          if (res.finished) return void finish();
+          if (res.finished) {
+            jobFinished = true;
+            return void finish();
+          }
         }
       } catch {
         /* transient network error; keep polling */
@@ -131,10 +234,10 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     if (!api.config.url) return;
     abortController = new AbortController();
     try {
-      const res = await api.callEdgeFunction('deepseek-chat', { job_id: jobId }, abortController.signal);
+      const res = await api.callEdgeFunction({ job_id: jobId }, abortController.signal);
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        // 501/503 means "no credentials configured" — the browser worker can still take over.
+        // 503 means the server has no usable DeepSeek credential; the DB path still renders.
         state!.metrics = { ...state!.metrics, edge_status: res.status, edge_note: body.slice(0, 200) };
         renderStatus();
         return;
@@ -142,11 +245,11 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
       await readSse(res, {
         signal: abortController.signal,
         onEvent: (event: SseEvent) => {
-          if (!state || state.done) return;
+          if (!state) return;
           if (event.data === SSE_DONE) return void finish();
-          let parsed: SseLine;
+          let parsed: ChunkPayload & { seq?: number };
           try {
-            parsed = JSON.parse(event.data) as SseLine;
+            parsed = JSON.parse(event.data) as ChunkPayload & { seq?: number };
           } catch {
             return;
           }
@@ -154,7 +257,7 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
           applyChunk(state, seq, parsed);
           renderAssistant();
           renderStatus();
-          if (state.done) finish();
+          if (state.done) void finish();
         },
       });
     } catch (err) {
@@ -165,24 +268,37 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     }
   }
 
+  // --- actions -------------------------------------------------------------
+
   async function send(text: string): Promise<void> {
     const content = text.trim();
     if (!content || (state && !state.done)) return;
-    const cfg = getConfig();
+
     log.querySelectorAll('.muted').forEach((node) => node.remove());
     log.append(messageNode('user', content));
-    history.push({ role: 'user', content });
+    session.turns.push({ role: 'user', content, at: Date.now() });
+    saveSession(session);
+    renderSession();
 
     state = createChatState();
-    assistantNode = null;
+    assistant = null;
     sseSeq = 0;
+    finishing = false;
+    jobFinished = false;
     setBusy(true);
     setStatus('DeepSeek：排队中', 'idle');
     statusLine.textContent = '';
 
     let enqueued;
     try {
-      enqueued = await api.enqueue(history.slice(-20), cfg.model);
+      enqueued = await api.ask({
+        prompt: content,
+        sessionId: session.dsSessionId,
+        parentId: session.parentId,
+        modelType: isModelType(modelSelect.value) ? modelSelect.value : 'default',
+        thinking: thinkingBox.checked,
+        search: searchBox.checked,
+      });
     } catch (err) {
       setBusy(false);
       log.append(messageNode('system', `无法入队：${(err as Error).message}`));
@@ -190,10 +306,18 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     }
     if (!enqueued.ok || !enqueued.job_id) {
       setBusy(false);
-      const why = enqueued.error === 'rate_limited' ? '发送太快，稍等 1 分钟' : enqueued.error || '入队失败';
-      log.append(messageNode('system', String(why)));
+      const why =
+        enqueued.error === 'rate_limited'
+          ? '发送太快，稍等 1 分钟'
+          : enqueued.error === 'no_credentials'
+            ? '服务端还没有 DeepSeek 登录态'
+            : String(enqueued.error || '入队失败');
+      log.append(messageNode('system', why));
       return;
     }
+
+    // The turn is queued against a conversation; remember which one even if the stream dies.
+    if (enqueued.session_id) session.dsSessionId = enqueued.session_id;
 
     state.jobId = enqueued.job_id;
     state.status = 'queued';
@@ -202,16 +326,21 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
 
     unsubscribe = api.subscribeJob(enqueued.job_id, {
       onChunk: (row) => {
-        if (!state || state.done) return;
-        applyChunk(state, row.seq, row.payload);
+        // No `state.done` guard here: applyChunk dedupes by seq, and a chunk that arrives
+        // after the answer looked finished (the done frame's session ids) still has to land.
+        if (!state) return;
+        applyChunk(state, row.seq, row.payload as ChunkPayload);
         renderAssistant();
         renderStatus();
       },
       onJob: (row) => {
-        if (!state || state.done) return;
+        if (!state) return;
         applyStatus(state, { status: row.status, metrics: row.metrics as never, error: row.error });
         renderStatus();
-        if (row.status === 'done' || row.status === 'error' || row.status === 'cancelled') finish();
+        if (row.status === 'done' || row.status === 'error' || row.status === 'cancelled') {
+          jobFinished = true;
+          void finish();
+        }
       },
       onError: () => {
         if (state) state.metrics = { ...state.metrics, realtime: 'unavailable' };
@@ -219,8 +348,7 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     });
 
     pump();
-
-    if (cfg.transport !== 'browser') void streamFromEdge(enqueued.job_id);
+    void streamFromEdge(enqueued.job_id);
   }
 
   async function stop(): Promise<void> {
@@ -230,37 +358,39 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
     } catch {
       /* best effort */
     }
-    finish('已手动停止');
+    void finish('已手动停止');
+  }
+
+  function startNewSession(): void {
+    teardown();
+    state = null;
+    assistant = null;
+    session = newSession();
+    clearSession();
+    saveSession(session);
+    renderTranscript();
+    renderSession();
+    renderStatus();
+    setBusy(false);
+    toast('已开始新会话', 'ok');
   }
 
   async function refreshHealth(): Promise<void> {
     try {
       const health = await api.health();
       if (!health.ok) return;
-      const rows: Array<[string, string]> = [
-        ['队列中', String(health.queued ?? 0)],
-        ['存活 worker', String(health.workers_alive ?? 0)],
-        ['近 1 小时成功', String(health.done_last_hour ?? 0)],
-        ['近 1 小时失败', String(health.error_last_hour ?? 0)],
-      ];
-      const kv = $('health-kv');
-      kv.replaceChildren(
-        ...rows.flatMap(([key, value]) => {
-          const dt = document.createElement('dt');
-          dt.textContent = key;
-          const dd = document.createElement('dd');
-          dd.textContent = value;
-          return [dt, dd];
-        }),
-      );
-      const transport = getConfig().transport;
-      const noEdge = transport !== 'edge';
-      const noWorker = transport !== 'browser' && (health.workers_alive ?? 0) === 0;
-      if (noEdge && noWorker) {
-        toast('还没有可用的 DeepSeek 转发通道：部署 Edge Function，或在已登录的 DeepSeek 标签页运行 worker', 'err');
+      if (health.credential_configured === false) {
+        setStatus('DeepSeek 未配置登录态', 'warn');
+        return;
       }
+      if (health.credential_error) {
+        setStatus(`DeepSeek 登录态异常：${String(health.credential_error).slice(0, 60)}`, 'err');
+        return;
+      }
+      const median = typeof health.median_ttft_ms === 'number' ? `，中位首字 ${Math.round(health.median_ttft_ms)}ms` : '';
+      setStatus(`DeepSeek 就绪${median}`, 'ok');
     } catch {
-      /* settings panel shows the failure */
+      /* the admin page reports connection failures */
     }
   }
 
@@ -279,6 +409,10 @@ export function initChat(api: ToolsApi, getConfig: () => { model: string; transp
   });
 
   on(stopButton, 'click', () => void stop());
+  on(newSessionButton, 'click', () => startNewSession());
 
-  return { send, stop, refreshHealth };
+  renderTranscript();
+  renderSession();
+
+  return { send, stop, refreshHealth, startNewSession, currentSession: () => session };
 }
