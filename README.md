@@ -16,7 +16,7 @@
 | 单元测试 | **160 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列）；**8 项**拔服务演练通过（`npm run test:live:outage`：无人领取时告知用户、排队不丢、重启后补答） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
-| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **44 项**检查通过（`npm run test:browser`，含故意乱序投递的块流），另有 **32 项**直接打线上站点（`npm run test:live`，含跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸） |
+| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **44 项**检查通过（`npm run test:browser`，含故意乱序投递的块流），另有 **39 项**直接打线上站点（`npm run test:live`，含五种登录态字符串格式粘贴、跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸） |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | CI（干净 runner，不靠这台机器） | **全绿**：生成物校验 + typecheck + 构建 + 单测，加上对真项目的 `db-push` / `db-test` **99/99** 与 Playwright 冒烟 **44/44**（走 session pooler 的 IPv4，见「本地开发」里的 IPv6 说明） |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
@@ -153,7 +153,7 @@ npm run test:db       # 99 项线上后端端到端（PostgREST + Postgres，跑
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
 npm run test:browser  # 44 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记（块故意后到）、后台隐藏、粘贴登录态
-npm run test:live     # 32 项打线上站点：不塞任何桩。真转发 + 真 DeepSeek；续聊 / 新会话 / 工具标记 / 跨设备共享剪贴板 / 5s 额外延迟预算 / 后台粘贴登录态 / 登录态失效演练（假 token → 报错 → 换回 → 恢复）/ 390×844 手机视口（无横向滚动、触控目标 ≥44px、输入框 16px 不触发 iOS 缩放）
+npm run test:live     # 39 项打线上站点：不塞任何桩。真转发 + 真 DeepSeek；五种登录态字符串格式（token / cURL / JSON / key-value / dscred1，以及只粘 Cookie 要被拒）、续聊 / 新会话 / 工具标记 / 跨设备共享剪贴板 / 5s 额外延迟预算 / 登录态失效演练（假 token → 报错 → 换回 → 恢复）/ 390×844 手机视口（无横向滚动、触控目标 ≥44px、输入框 16px 不触发 iOS 缩放）
 npm run test:live:outage # 8 项：把转发服务真停掉 —— 健在心跳过期后状态条告知无人领取、排队消息不丢、重启后被补答
 npm run test:all      # 全部跑一遍，含线上站点（test:live 与 test:live:outage；后者会把转发服务真停一分钟）
 npm run check:generated   # 内置默认值与内联 wasm 是否和 .env.local / vendor 一致

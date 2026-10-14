@@ -288,6 +288,71 @@ try {
   check('the phone input is 16px so iOS does not zoom on focus', m.inputFont >= 16, m);
   check('the backend stays hidden on the phone too', m.adminTabVisible === false, m);
   await mobile.context().close();
+
+  // 10. "the user pastes one string" — every format the parser claims to read, pasted into the
+  // deployed backend page. Unit tests cover the parser; this proves the page in production takes
+  // a bare token, a DevTools "Copy as cURL", a JSON dump, labelled key/value lines and the
+  // reusable dscred1 string, and refuses a cookie-only paste instead of storing a tokenless row.
+  const liveToken = snapshot.body?.token || '';
+  const curl = `curl 'https://chat.deepseek.com/api/v0/chat/completion' \
+  -H 'Authorization: Bearer ${liveToken}' \
+  -H 'Content-Type: application/json' \
+  --data-raw '{}'`;
+  const formats = [
+    { label: 'token', input: liveToken },
+    { label: 'curl', input: curl },
+    { label: 'json', input: JSON.stringify({ userToken: liveToken }) },
+    { label: 'kv', input: `token: ${liveToken}` },
+    {
+      label: 'canonical',
+      input: `dscred1:${Buffer.from(JSON.stringify({ t: liveToken })).toString('base64url')}`,
+    },
+  ];
+  await page.goto(`${BASE}/?admin=1`, { waitUntil: 'load' });
+  await page.waitForSelector('.tab[data-view="admin"]:not([hidden])', { timeout: 15_000 }).catch(() => {});
+  await page.click('.tab[data-view="admin"]');
+  await page.waitForSelector('#cred-input', { state: 'visible', timeout: 20_000 });
+  await page.fill('#admin-token', env.TOOLS_ADMIN_TOKEN || '');
+  for (const f of formats) {
+    await page.fill('#cred-input', f.input);
+    await page.click('#cred-save');
+    const saved = await page
+      .waitForFunction(() => /已保存/.test(document.getElementById('cred-preview')?.textContent || ''), null, { timeout: 20_000 })
+      .then(() => true)
+      .catch(() => false);
+    const preview = (await page.textContent('#cred-preview')) || '';
+    const canonical = await page.inputValue('#cred-canonical');
+    const carried = canonical.startsWith('dscred1:') ? JSON.parse(Buffer.from(canonical.slice(8), 'base64url').toString('utf8')).t : null;
+    check(`the deployed page stores a ${f.label} string and hands back the reusable one`, saved && preview.includes(f.label) && carried === liveToken, {
+      preview,
+      carried: String(carried).slice(0, 12),
+    });
+  }
+  await page.fill('#cred-input', 'smidV2=abc123; other=1');
+  await page.click('#cred-save');
+  const refused = await page
+    .waitForFunction(() => !document.getElementById('cred-error')?.hidden, null, { timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  check('a cookie-only paste is refused with a message, not stored', refused, await page.textContent('#cred-error'));
+
+  // The format loop stored whatever it parsed last; put the operator's credential back exactly.
+  if (snapshot.body?.token) {
+    await rpc(
+      'deepseek_credential_set',
+      {
+        p_token: snapshot.body.token,
+        p_device_id: snapshot.body.device_id,
+        p_cookie: snapshot.body.cookie,
+        p_user_agent: snapshot.body.user_agent,
+        p_source: snapshot.body.source,
+        p_note: 'restored by live-smoke (format loop)',
+      },
+      { key: serviceRoleKey() },
+    );
+    const back = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+    check('the credential is back exactly as found after the format loop', back.body?.token === snapshot.body.token && (back.body?.user_agent || '') === (snapshot.body.user_agent || ''), back.body?.token?.slice(0, 8));
+  }
 } finally {
   await browser.close();
 }
