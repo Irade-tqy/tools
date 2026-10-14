@@ -122,6 +122,12 @@ try {
   check('the live turn recorded the conversation ids', Boolean(newest?.session_id) && Boolean(newest?.reply_message_id), newest);
   check('the live turn recorded upstream timings', Number(newest?.metrics?.upstream_ttft_ms) > 0, newest?.metrics);
 
+  // The agreed budget: our end-to-end time-to-first-token may exceed upstream's by at most 5s.
+  // The page prints the difference itself, so this asserts what a visitor is actually told.
+  const meta1 = (await page.locator('.msg__meta').first().textContent().catch(() => null)) || '';
+  check('the live turn reports its overhead over upstream', /额外 \d/.test(meta1), meta1);
+  check('the live turn stays inside the 5s overhead budget', meta1.includes('额外') && !/超 5s/.test(meta1), meta1);
+
   // 2. continue the same conversation
   const second = await send(page, '我刚才让你记住的代号是什么？只回复代号');
   check('the live site continues the same conversation', second.includes(marker), second.slice(0, 160));
@@ -139,13 +145,48 @@ try {
   check('a tool-using turn shows the "已调用工具" marker', /已调用工具/.test(chip), chip.slice(0, 200));
   check('tool noise stays out of the answer text', !/搜索到\s*\d+\s*个网页/.test(fourth), fourth.slice(0, 200));
 
-  // 5. the public page never leaks the backend
+  // 5. the shared clipboard really is shared: a second, clean browser (no localStorage, no
+  // remembered token) unlocks with the same password and reads what the first one saved —
+  // decrypted. One browser can never prove this, which is why it lives here and not only in
+  // scripts/browser-smoke.mjs.
+  const password = (env.TOOLS_CLIPBOARD_PASSWORDS || '').split(':').pop().trim();
+  const shared = `live-share-${Date.now().toString(36)}`;
+  const writer = await (await browser.newContext()).newPage();
+  await writer.goto(`${BASE}/`, { waitUntil: 'load' });
+  await writer.fill('#password-input', password);
+  await writer.click('#unlock-form button[type=submit]');
+  await writer.waitForSelector('.cm-editor', { timeout: 30_000 });
+  await writer.click('.cm-content');
+  await writer.keyboard.type(shared);
+  await writer.fill('#entry-title', 'live share');
+  await writer.click('#save-text');
+  await writer.waitForFunction((m) => Array.from(document.querySelectorAll('.entry__body')).some((n) => n.textContent.includes(m)), shared, {
+    timeout: 25_000,
+  });
+  check('a browser saves a clipboard entry on the live site', true);
+
+  const reader = await (await browser.newContext()).newPage();
+  await reader.goto(`${BASE}/`, { waitUntil: 'load' });
+  await reader.fill('#password-input', password);
+  await reader.click('#unlock-form button[type=submit]');
+  await reader.waitForSelector('.cm-editor', { timeout: 30_000 });
+  const sharedSeen = await reader
+    .waitForFunction((m) => Array.from(document.querySelectorAll('.entry__body')).some((n) => n.textContent.includes(m)), shared, {
+      timeout: 25_000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  check('a second device sees the entry the first one saved, decrypted', sharedSeen, shared);
+  await writer.context().close();
+  await reader.context().close();
+
+  // 6. the public page never leaks the backend
   // The admin <section> exists in the DOM (hidden) and holds the credential box, so the
   // question is whether a visitor can see or reach it — not whether it is in the markup.
   const credVisible = await page.isVisible('#cred-input');
   check('the credential box is not reachable on the public page', !credVisible, { credVisible });
 
-  // 6. the operator flow on the DEPLOYED page: paste one string → parsed → stored.
+  // 7. the operator flow on the DEPLOYED page: paste one string → parsed → stored.
   // Runs last, and restores the live credential straight afterwards.
   await page.goto(`${BASE}/?admin=1`, { waitUntil: 'load' });
   await page.waitForSelector('.tab[data-view="admin"]:not([hidden])', { timeout: 15_000 }).catch(() => {});
