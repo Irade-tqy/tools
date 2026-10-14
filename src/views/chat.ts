@@ -91,6 +91,11 @@ export function initChat(api: ToolsApi): ChatView {
     else if (!state.done) parts.push(`状态：${state.status}`);
     if (state.done) parts.push(describeLatency(state));
     else if (state.text || state.reasoning) parts.push('生成中…');
+    // A queued turn with nobody claiming it means the relay is not deployed — say so instead
+    // of letting the user stare at "排队中".
+    if (!state.done && state.status === 'queued' && Date.now() - state.startedAt > 15_000) {
+      parts.push('没有转发通道在领取任务（Edge Function 未部署？）');
+    }
     statusLine.textContent = parts.join(' · ');
   }
 
@@ -385,6 +390,12 @@ export function initChat(api: ToolsApi): ChatView {
       }
       if (health.credential_error) {
         setStatus(`DeepSeek 登录态异常：${String(health.credential_error).slice(0, 60)}`, 'err');
+        return;
+      }
+      // The credential being configured is not the same as a relay being live: if jobs are
+      // sitting in the queue and nothing has claimed one, the Edge Function is missing.
+      if ((health.pending ?? 0) > 0 && (health.workers_alive ?? 0) === 0) {
+        setStatus('DeepSeek：队列积压，没有可用转发通道', 'warn');
         return;
       }
       const median = typeof health.median_ttft_ms === 'number' ? `，中位首字 ${Math.round(health.median_ttft_ms)}ms` : '';
