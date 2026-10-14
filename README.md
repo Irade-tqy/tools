@@ -136,6 +136,14 @@ npm run deepseek:credential -- '<登录字符串>'          # 配 DeepSeek 登�
 npm run dev                                           # http://127.0.0.1:5173
 ```
 
+**直连 Postgres 只有 IPv6**（`db.<ref>.supabase.co` 公网只发 AAAA）。本机跑得通是因为 Tailscale MagicDNS 把它解析成了 198.18.0.x；GitHub runner 没 IPv6，会直接 `ENETUNREACH`。跳网机器（CI 等）用 session pooler（IPv4）：
+
+```bash
+export TOOLS_DB_URL='postgresql://postgres.<ref>:<密码>@aws-0-ap-northeast-2.pooler.supabase.com:5432/postgres'
+```
+
+CI 里这个值以 `TOOLS_DB_URL` secret 存在，所以 `db-push` / `db-test` 能在干净 runner 上跑真库。
+
 ## 测试
 
 ```bash
