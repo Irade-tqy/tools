@@ -18,6 +18,8 @@
     "db:status": "node scripts/db-push.mjs --status",
     "allowlist": "node scripts/allowlist.mjs",
     "secrets:sync": "node scripts/secrets-sync.mjs",
+    "deepseek:login": "node scripts/deepseek-login.mjs",
+    "deepseek:probe": "node scripts/deepseek-probe.mjs",
     "functions:deploy": "node scripts/functions-deploy.mjs",
     "pages:deploy": "node scripts/pages-deploy.mjs",
     "pages:publish": "node scripts/pages-publish.mjs"

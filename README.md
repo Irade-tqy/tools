@@ -19,19 +19,21 @@
 
 线上当前状态：`/functions/v1/deepseek-chat` 返回 404（未部署，缺 Supabase access token），前端会自动退到队列 + 浏览器 worker 路线 —— 这条路线已被上面的浏览器检查覆盖（模拟通道领取任务并流式回传）。
 
-DeepSeek 那一步之所以还没验证，是因为机器上没有可用的 DeepSeek 登录会话；一旦拿到 Cookie 或 API key：
+DeepSeek 那一步之所以还没验证，是因为机器上没有可用的 DeepSeek 登录会话。拿到登录态或密钥的完整流程：
 
 ```bash
-# 方式 A：官方 API key（最稳）
-echo 'DEEPSEEK_API_KEY=sk-...' >> .env.local
-# 方式 B：网页登录态 Cookie
-echo 'DEEPSEEK_WEB_COOKIE=<cookie 头>' >> .env.local
+# 1) 浏览器登录 DeepSeek，把会话 Cookie 导出到 .env.local（有桌面时默认有头模式，WAF 验证可以手动过）
+node scripts/deepseek-login.mjs --phone 17317329061 --code-file /tmp/deepseek-code.txt
+#    收到短信后把验证码写进那个文件： echo 123456 > /tmp/deepseek-code.txt
 
-npm run secrets:sync        # 推到 Supabase secret
-npm run functions:deploy    # 部署 Edge Function
+# 2) 直接量上游：TTFB / 首字 / 总耗时，验证“额外 ≤ 5s”这个目标
+node scripts/deepseek-probe.mjs
+
+# 3) 部署 Edge Function（需要 SUPABASE_ACCESS_TOKEN）
+npm run secrets:sync && npm run functions:deploy
 ```
 
-没有服务端凭据时，在**已登录 chat.deepseek.com 的标签页**里粘贴设置页复制的 worker 代码即可（同源请求才能带上登录 Cookie）。
+没有服务端凭据时，在**已登录 chat.deepseek.com 的标签页**里粘贴设置页复制的 worker 代码即可（同源请求才能带上登录 Cookie）；这条路线已经被浏览器测试覆盖（模拟通道领取 + 流式回传）。
 
 ## 本地开发
 
@@ -82,7 +84,8 @@ src/lib/                 config · api · crypto · sse · chat-reducer · rende
 src/views/               clipboard · chat · settings
 public/deepseek-worker.js 零依赖浏览器 worker（登录态标签页里跑）
 scripts/                 db-push · db-test · allowlist · browser-smoke · secrets-sync ·
-                         functions-deploy · pages-publish · pages-deploy
+                         functions-deploy · pages-publish · pages-deploy ·
+                         deepseek-login（登录导出 Cookie）· deepseek-probe（上游延迟实测）
 tests/                   vitest 单元测试
 ```
 
@@ -98,4 +101,4 @@ tests/                   vitest 单元测试
 
 ## 延迟目标
 
-约定是“相对官网额外耗时 ≤ 5s”。实现方式是把测量做进链路：worker / Edge Function 上报 `upstream_ttfb_ms`、`upstream_ttft_ms`、`upstream_total_ms`，服务端记录 `claimed_at` / `first_chunk_at` / `finished_at`，前端 `latencyOf()` 计算 `额外 = 本站首字 − 上游首字`，超过 5s 会在状态条里标警告。真实数字要等 DeepSeek 通道跑通后看对话页的状态行。
+约定是“相对官网额外耗时 ≤ 5s”。实现方式是把测量做进链路：worker / Edge Function 上报 `upstream_ttfb_ms`、`upstream_ttft_ms`、`upstream_total_ms`，服务端记录 `claimed_at` / `first_chunk_at` / `finished_at`，前端 `latencyOf()` 计算 `额外 = 本站首字 − 上游首字`，超过 5s 会在状态条里标警告。真实数字要等 DeepSeek 通道跑通后看对话页的状态行，或者先跑 `node scripts/deepseek-probe.mjs` 直接量上游基线。

@@ -17,3 +17,6 @@ scripts/.cache/
 
 # Optional runtime credentials for self-hosted deployments (see public/config.example.js).
 /public/config.js
+
+# scratch space for ad-hoc dev scripts
+.tmp/
