@@ -85,13 +85,21 @@ describe('applyChunk', () => {
     expect(chunkCursor(state)).toBe(2);
   });
 
-  it('releases buffered chunks when the hole is permanent', () => {
+  it('releases buffered chunks when a hole looks permanent, but keeps asking for it', () => {
     const state = createChatState();
     applyChunk(state, 2, { text: '尾' }, 10);
     expect(state.text).toBe('');
     flushPending(state, 20);
     expect(state.text).toBe('尾');
-    expect(chunkCursor(state)).toBe(2);
+    // The cursor must not walk past the hole: on the deployed page the tool payload arrived
+    // after this flush, and a cursor at lastSeq dropped it for good.
+    expect(chunkCursor(state)).toBe(-1);
+    applyChunk(state, 0, { tool: tool() }, 30);
+    expect(toolSummaryOf(state).used).toBe(true);
+    expect(state.text).toBe('尾'); // the flushed chunk is not appended twice
+    applyChunk(state, 1, { text: '中' }, 31);
+    expect(state.text).toBe('尾中'); // late content lands even though it can no longer be re-ordered
+    expect(state.seen.size).toBe(3);
   });
 
   it('releases the tail as soon as the job reports finished', () => {

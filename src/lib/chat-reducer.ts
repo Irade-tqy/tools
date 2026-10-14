@@ -64,8 +64,12 @@ export interface ChatState {
   error: string | null;
   done: boolean;
   lastSeq: number;
-  /** The lowest seq not yet applied. Everything below it is in the answer, in order. */
+  /** The lowest seq not yet applied. It sits on the hole even after a flush, so the cursor keeps
+   * asking the server for it — a chunk that arrives after the flush still has to land. */
   nextSeq: number;
+  /** Every seq already applied, contiguous or flushed. This is the dedupe key; re-fetching from
+   * the hole is expected and must not append the same text twice. */
+  seen: Set<number>;
   /** Chunks that arrived ahead of `nextSeq`; held until the gap in front of them fills. */
   pending: Map<number, ChunkPayload>;
   /** When the oldest held chunk arrived, so a permanently missing seq cannot stall the answer. */
@@ -98,6 +102,7 @@ export function createChatState(startedAt = Date.now()): ChatState {
     done: false,
     lastSeq: -1,
     nextSeq: 0,
+    seen: new Set<number>(),
     pending: new Map<number, ChunkPayload>(),
     pendingSince: null,
     metrics: {},
@@ -140,11 +145,12 @@ function upsertTool(state: ChatState, tool: ToolPayload): void {
  * cursor ask the server for the hole.
  */
 export function applyChunk(state: ChatState, seq: number, payload: ChunkPayload, now = Date.now()): ChatState {
-  if (seq < state.nextSeq) return state; // already in the answer (redelivery)
-  if (state.pending.has(seq)) return state; // buffered copy of the same seq
+  if (state.seen.has(seq)) return state; // already in the answer (redelivery from another transport)
   if (seq !== state.nextSeq) {
-    state.pending.set(seq, payload);
-    if (state.pendingSince === null) state.pendingSince = now;
+    if (!state.pending.has(seq)) {
+      state.pending.set(seq, payload);
+      if (state.pendingSince === null) state.pendingSince = now;
+    }
     return state;
   }
   applyPayload(state, seq, payload, now);
@@ -155,7 +161,9 @@ export function applyChunk(state: ChatState, seq: number, payload: ChunkPayload,
 /**
  * Apply whatever is buffered, in seq order, without waiting for the gap in front of it. Used
  * when the turn finishes (the tail must not be held hostage) and when a hole stops refilling
- * (a chunk the relay could not write is gone for good).
+ * (a chunk the relay could not write is gone for good). `nextSeq` deliberately stays on the
+ * hole: the cursor keeps asking for it, and if the chunk turns up after all, it still lands —
+ * abandoning the hole is what lost the tool payload the first time.
  */
 export function flushPending(state: ChatState, now = Date.now()): ChatState {
   if (!state.pending.size) return state;
@@ -164,23 +172,28 @@ export function flushPending(state: ChatState, now = Date.now()): ChatState {
     state.pending.delete(seq);
     applyPayload(state, seq, payload, now);
   }
-  state.nextSeq = state.lastSeq + 1;
   state.pendingSince = null;
   return state;
 }
 
 function drainPending(state: ChatState, now: number): void {
-  while (state.pending.has(state.nextSeq)) {
-    const payload = state.pending.get(state.nextSeq)!
+  for (;;) {
+    if (state.seen.has(state.nextSeq)) {
+      state.nextSeq += 1; // applied by an earlier flush, so the prefix is contiguous again
+      continue;
+    }
+    if (!state.pending.has(state.nextSeq)) break;
+    const payload = state.pending.get(state.nextSeq)!;
     state.pending.delete(state.nextSeq);
     applyPayload(state, state.nextSeq, payload, now);
+    state.nextSeq += 1;
   }
   state.pendingSince = state.pending.size ? (state.pendingSince ?? now) : null;
 }
 
 function applyPayload(state: ChatState, seq: number, payload: ChunkPayload, now: number): ChatState {
+  state.seen.add(seq);
   if (seq > state.lastSeq) state.lastSeq = seq;
-  if (seq >= state.nextSeq) state.nextSeq = seq + 1;
 
   if (payload?._transport) state.transport = payload._transport;
 
@@ -222,7 +235,8 @@ function applyPayload(state: ChatState, seq: number, payload: ChunkPayload, now:
 /**
  * The `since_seq` value to ask the server for: one below `nextSeq`, i.e. from the first seq we
  * are still missing. Using `lastSeq` strands a hole — the server only returns `seq > since_seq`,
- * so a chunk that arrived too early to apply would never be offered again.
+ * so a chunk that arrived too early to apply would never be offered again. Polls re-send what
+ * is already applied; `seen` drops them.
  */
 export function chunkCursor(state: ChatState): number {
   return state.nextSeq - 1;
