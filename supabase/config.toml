@@ -1,0 +1,7 @@
+# Minimal Supabase CLI config. The local dev scripts (scripts/db-*.mjs) talk to the hosted
+# project directly, so `supabase start` / a local stack is not required.
+project_id = "tools"
+schema = "public"
+
+[functions.deepseek-chat]
+verify_jwt = false

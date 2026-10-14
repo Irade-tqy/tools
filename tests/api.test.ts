@@ -1,0 +1,238 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  channels: [] as Array<{ name: string; handlers: Array<Record<string, unknown>>; subscribed: unknown[] }>,
+  removed: [] as unknown[],
+}));
+
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: (url: string, key: string) => {
+    void url;
+    void key;
+    return {
+      channel(name: string) {
+        const record = { name, handlers: [] as Array<Record<string, unknown>>, subscribed: [] as unknown[] };
+        mocks.channels.push(record);
+        const channel = {
+          on(type: string, config: Record<string, unknown>, cb: unknown) {
+            record.handlers.push({ type, config, cb });
+            return channel;
+          },
+          subscribe(cb: unknown) {
+            record.subscribed.push(cb);
+            return channel;
+          },
+        };
+        return channel;
+      },
+      removeChannel(handle: unknown) {
+        mocks.removed.push(handle);
+      },
+    };
+  },
+}));
+
+const { ApiError: ApiErrorCtor, ToolsApi } = await import('../src/lib/api');
+type ApiError = InstanceType<typeof ApiErrorCtor>;
+
+const URL = 'https://demo.supabase.co';
+const KEY = 'anon-key-0123456789';
+
+interface Recorded {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: unknown;
+}
+
+let requests: Recorded[] = [];
+
+function stubFetch(response: unknown, init: { status?: number; ok?: boolean } = {}) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init2?: RequestInit) => {
+      requests.push({
+        url: String(input),
+        method: init2?.method ?? 'GET',
+        headers: (init2?.headers ?? {}) as Record<string, string>,
+        body: init2?.body ? JSON.parse(String(init2.body)) : undefined,
+      });
+      return {
+        ok: init.ok ?? true,
+        status: init.status ?? 200,
+        text: async () => (typeof response === 'string' ? response : JSON.stringify(response)),
+      };
+    }),
+  );
+}
+
+beforeEach(() => {
+  requests = [];
+  mocks.channels.length = 0;
+  mocks.removed.length = 0;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe('rpc plumbing', () => {
+  it('posts to the rpc endpoint with the anon key on both headers', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'deepseek-chat', transport: 'auto' });
+    await api.list();
+    const req = requests[0]!;
+    expect(req.url).toBe(`${URL}/rest/v1/rpc/clipboard_list`);
+    expect(req.method).toBe('POST');
+    expect(req.headers.apikey).toBe(KEY);
+    expect(req.headers.Authorization).toBe(`Bearer ${KEY}`);
+    expect(req.headers['Content-Type']).toBe('application/json');
+  });
+
+  it('sends the clipboard token header once unlocked', async () => {
+    stubFetch({ ok: true, entries: [] });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    api.setToken('tok-123');
+    await api.list(20);
+    expect(requests[0]!.headers['x-clipboard-token']).toBe('tok-123');
+    expect(requests[0]!.body).toEqual({ p_limit: 20 });
+  });
+
+  it('never leaks the clipboard token into verify', async () => {
+    stubFetch({ ok: true, token: 't' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' }, 'stale-token');
+    await api.verify('pw', 60);
+    expect(requests[0]!.headers['x-clipboard-token']).toBeUndefined();
+    expect(requests[0]!.body).toEqual({ p_password: 'pw', p_ttl_seconds: 60 });
+  });
+
+  it('uploads files with kind, ciphertext, iv and salt', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' }, 'tok');
+    await api.putFile({ fileName: 'a.txt', fileType: 'text/plain', data: 'ZGF0YQ==', iv: 'aXY=', salt: 'c2FsdA==' });
+    expect(requests[0]!.body).toEqual({
+      p_kind: 'file',
+      p_title: 'a.txt',
+      p_file_name: 'a.txt',
+      p_file_type: 'text/plain',
+      p_data: 'ZGF0YQ==',
+      p_iv: 'aXY=',
+      p_salt: 'c2FsdA==',
+    });
+  });
+
+  it('passes job ids and cursors through to the relay RPCs', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'deepseek-chat', transport: 'auto' });
+    await api.enqueue([{ role: 'user', content: 'hi' }]);
+    await api.jobStatus('job-1', 3);
+    await api.claim('worker-1');
+    await api.appendChunk('job-1', 4, { choices: [] });
+    expect(requests.map((r) => r.url.split('/rpc/')[1])).toEqual([
+      'deepseek_enqueue',
+      'deepseek_status',
+      'deepseek_claim',
+      'deepseek_append',
+    ]);
+    expect(requests[0]!.body).toEqual({ p_messages: [{ role: 'user', content: 'hi' }], p_model: 'deepseek-chat' });
+    expect(requests[1]!.body).toEqual({ p_job_id: 'job-1', p_since_seq: 3 });
+    expect(requests[2]!.body).toEqual({ p_worker_id: 'worker-1' });
+  });
+
+  it('turns an HTTP error into an ApiError carrying the Postgres message', async () => {
+    stubFetch({ code: '42883', message: 'operator does not exist' }, { ok: false, status: 400 });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    await expect(api.list()).rejects.toThrowError(ApiErrorCtor);
+    try {
+      await api.list();
+    } catch (err) {
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).code).toBe('42883');
+      expect((err as ApiError).message).toContain('operator does not exist');
+    }
+  });
+
+  it('reports unreachable networks as status 0', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    }));
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    const error = await api.list().catch((err: ApiError) => err);
+    expect(error).toBeInstanceOf(ApiErrorCtor);
+    expect((error as ApiError).status).toBe(0);
+    expect((error as ApiError).message).toContain('网络不可达');
+  });
+
+  it('survives a non-JSON body', async () => {
+    stubFetch('<html>502 bad gateway</html>');
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    const body = await api.list();
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('bad_json');
+  });
+
+  it('treats an empty 204 body as a failure envelope', async () => {
+    stubFetch('');
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    expect((await api.list()).error).toBe('empty_response');
+  });
+
+  it('rebuilds the realtime client when the project changes', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    api.subscribeJob('job-a', { onChunk: () => {} });
+    api.setConfig({ url: 'https://other.supabase.co', anonKey: 'other-key-0123456789', model: 'm', transport: 'auto' });
+    api.subscribeJob('job-b', { onChunk: () => {} });
+    expect(mocks.channels.map((c) => c.name)).toEqual(['job-job-a', 'job-job-b']);
+  });
+});
+
+describe('subscribeJob', () => {
+  it('watches chunk inserts and job updates for one job only', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    const chunks: unknown[] = [];
+    const jobs: unknown[] = [];
+    api.subscribeJob('job-42', { onChunk: (row) => chunks.push(row), onJob: (row) => jobs.push(row) });
+
+    const channel = mocks.channels[0]!;
+    expect(channel.name).toBe('job-job-42');
+    const [insert, update] = channel.handlers;
+    expect(insert?.config).toMatchObject({ event: 'INSERT', table: 'deepseek_chunk', filter: 'job_id=eq.job-42' });
+    expect(update?.config).toMatchObject({ event: 'UPDATE', table: 'deepseek_job', filter: 'id=eq.job-42' });
+
+    (insert?.cb as (payload: { new: unknown }) => void)({ new: { seq: 0, payload: {} } });
+    (update?.cb as (payload: { new: unknown }) => void)({ new: { status: 'done' } });
+    expect(chunks).toEqual([{ seq: 0, payload: {} }]);
+    expect(jobs).toEqual([{ status: 'done' }]);
+  });
+
+  it('removes the channel when disposed', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    const dispose = api.subscribeJob('job-1', { onChunk: () => {} });
+    dispose();
+    expect(mocks.removed).toHaveLength(1);
+  });
+
+  it('reports realtime failures to the caller instead of throwing', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    let reported: unknown = null;
+    api.subscribeJob('job-1', { onChunk: () => {}, onError: (err) => (reported = err) });
+    const cb = mocks.channels[0]!.subscribed[0] as (status: string) => void;
+    cb('TIMED_OUT');
+    expect(reported).toBe('TIMED_OUT');
+  });
+});
+
+describe('callEdgeFunction', () => {
+  it('posts the job id to the function endpoint', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, model: 'm', transport: 'auto' });
+    await api.callEdgeFunction('deepseek-chat', { job_id: 'j1' });
+    expect(requests[0]!.url).toBe(`${URL}/functions/v1/deepseek-chat`);
+    expect(requests[0]!.headers.apikey).toBe(KEY);
+    expect(requests[0]!.body).toEqual({ job_id: 'j1' });
+  });
+});

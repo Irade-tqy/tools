@@ -1,0 +1,40 @@
+{
+  "name": "tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Static toolbox on GitHub Pages: shared cloud clipboard + DeepSeek chat, backed by Supabase.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:db": "node scripts/db-test.mjs",
+    "test:browser": "npm run build && node scripts/browser-smoke.mjs",
+    "test:all": "npm test && npm run test:db && npm run test:browser",
+    "db:push": "node scripts/db-push.mjs",
+    "db:status": "node scripts/db-push.mjs --status",
+    "allowlist": "node scripts/allowlist.mjs",
+    "secrets:sync": "node scripts/secrets-sync.mjs",
+    "functions:deploy": "node scripts/functions-deploy.mjs",
+    "pages:deploy": "node scripts/pages-deploy.mjs"
+  },
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.0.0",
+    "@codemirror/theme-one-dark": "^6.0.0",
+    "@supabase/supabase-js": "^2.0.0",
+    "codemirror": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "jsdom": "^26.0.0",
+    "pg": "^8.0.0",
+    "playwright": "^1.64.0",
+    "supabase": "^2.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0"
+  }
+}
