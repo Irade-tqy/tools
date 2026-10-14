@@ -48,6 +48,8 @@ jobs:
           TOOLS_SUPABASE_DB_PASSWORD: ${{ secrets.TOOLS_SUPABASE_DB_PASSWORD }}
           TOOLS_SUPABASE_REF: ${{ secrets.TOOLS_SUPABASE_REF }}
           TOOLS_DB_URL: ${{ secrets.TOOLS_DB_URL }}
+          TOOLS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TOOLS_SUPABASE_SERVICE_ROLE_KEY }}
+          TOOLS_ADMIN_TOKEN: ${{ secrets.TOOLS_ADMIN_TOKEN }}
       - name: Backend end-to-end
         run: node scripts/db-test.mjs
         env:
@@ -56,6 +58,8 @@ jobs:
           TOOLS_SUPABASE_DB_PASSWORD: ${{ secrets.TOOLS_SUPABASE_DB_PASSWORD }}
           TOOLS_SUPABASE_REF: ${{ secrets.TOOLS_SUPABASE_REF }}
           TOOLS_DB_URL: ${{ secrets.TOOLS_DB_URL }}
+          TOOLS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TOOLS_SUPABASE_SERVICE_ROLE_KEY }}
+          TOOLS_ADMIN_TOKEN: ${{ secrets.TOOLS_ADMIN_TOKEN }}
           TOOLS_CLIPBOARD_PASSWORDS: ${{ secrets.TOOLS_CLIPBOARD_PASSWORDS }}
       - name: Browser smoke test
         if: vars.BROWSER_TESTS == 'on'
@@ -69,4 +73,6 @@ jobs:
           TOOLS_SUPABASE_DB_PASSWORD: ${{ secrets.TOOLS_SUPABASE_DB_PASSWORD }}
           TOOLS_SUPABASE_REF: ${{ secrets.TOOLS_SUPABASE_REF }}
           TOOLS_DB_URL: ${{ secrets.TOOLS_DB_URL }}
+          TOOLS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.TOOLS_SUPABASE_SERVICE_ROLE_KEY }}
+          TOOLS_ADMIN_TOKEN: ${{ secrets.TOOLS_ADMIN_TOKEN }}
           TOOLS_CLIPBOARD_PASSWORDS: ${{ secrets.TOOLS_CLIPBOARD_PASSWORDS }}
