@@ -261,3 +261,26 @@ input:focus, textarea:focus, select:focus { outline: 2px solid #1c4c8f; outline-
   .status { display: none; }
   .chat { height: calc(100vh - 150px); }
 }
+
+/* Touch targets. The toolbox gets opened from a phone over Tailscale, and the compact desktop
+   sizing measured 39px (发送) and 30px (新会话) on a 390×844 viewport — under the 44px a thumb
+   needs. iOS Safari also zooms the whole page when a focused input renders under 16px, which
+   pushed the chat form off-screen mid-typing. Scoped to coarse pointers so a mouse keeps the
+   dense layout. */
+@media (pointer: coarse) {
+  .btn,
+  .btn--sm,
+  .tab {
+    min-height: 44px;
+  }
+
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+
+  .check {
+    min-height: 44px;
+  }
+}

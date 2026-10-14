@@ -256,6 +256,38 @@ try {
     const healthBack = await call('deepseek_health');
     check('the credential error clears once a turn succeeds', !healthBack.body?.credential_error, healthBack.body?.credential_error);
   }
+
+  // 9. the phone path. The toolbox is opened over Tailscale from a phone, and the compact
+  // desktop sizing shipped 39px and 30px touch targets plus a 15px input (iOS Safari zooms the
+  // page on focus below 16px). Assert the numbers a thumb depends on.
+  const mobile = await (await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+  })).newPage();
+  await mobile.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+  await mobile.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
+  const m = await mobile.evaluate(() => {
+    const box = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? Math.round(el.getBoundingClientRect().height) : 0;
+    };
+    const de = document.documentElement;
+    return {
+      overflowX: de.scrollWidth - de.clientWidth,
+      send: box('#chat-send'),
+      newSession: box('#chat-new-session'),
+      tab: box('.tab[data-view="chat"]'),
+      inputFont: parseInt(getComputedStyle(document.getElementById('chat-input')).fontSize, 10),
+      adminTabVisible: Boolean(document.querySelector('.tab[data-view="admin"]')?.getBoundingClientRect().width),
+    };
+  });
+  check('the phone layout has no horizontal scroll', m.overflowX <= 0, m);
+  check('the phone touch targets are at least 44px', m.send >= 44 && m.newSession >= 44 && m.tab >= 44, m);
+  check('the phone input is 16px so iOS does not zoom on focus', m.inputFont >= 16, m);
+  check('the backend stays hidden on the phone too', m.adminTabVisible === false, m);
+  await mobile.context().close();
 } finally {
   await browser.close();
 }
