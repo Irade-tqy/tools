@@ -245,6 +245,21 @@ async function main() {
   check('repeated wrong passwords hit the rate limit', limited && limited.attempt <= 12, limited || 'never rate limited');
   await db.query('delete from public.clipboard_attempt');
 
+  // --- RPC shape: PostgREST cannot resolve an overloaded function (0007) ---
+  const overloads = await db.query(
+    `select n.nspname, p.proname, count(*) as candidates
+       from pg_proc p
+       join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname in ('public', 'app')
+        and (p.proname like 'deepseek%' or p.proname like 'clipboard%' or p.proname like 'tools%')
+      group by n.nspname, p.proname
+     having count(*) > 1`,
+  );
+  check('no RPC is overloaded (PostgREST would fail with PGRST203)', overloads.rows.length === 0, overloads.rows);
+  r = await rpc('deepseek_ask', { p_prompt: 'shape probe', p_queue: TEST_QUEUE });
+  check('a call that omits every optional parameter still resolves', r.body?.ok === true && Boolean(r.body?.job_id), r.body);
+  if (r.body?.job_id) await rpc('deepseek_cancel', { p_job_id: r.body.job_id });
+
   // ---- deepseek credential store -------------------------------------------
   // These checks overwrite the live credential, so snapshot it first and put it back in the
   // finally block — running the test suite must not log the relay out of DeepSeek.

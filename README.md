@@ -12,7 +12,7 @@
 
 | 部分 | 状态 |
 | --- | --- |
-| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**97 项**端到端检查通过（`npm run test:db`） |
+| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**99 项**端到端检查通过（`npm run test:db`） |
 | 单元测试 | **156 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
@@ -42,6 +42,7 @@ POST /api/v0/chat/completion             {chat_session_id, parent_message_id, pr
 - **登录态不在 Cookie 里**，在 `localStorage.userToken`，请求用 `Authorization: Bearer <userToken>`。Cookie 只是可选补充。
 - **`chat_session_id` 不能为 null** —— 新会话必须先 `chat_session/create` 拿到 UUID 再发。
 - **PoW 必须当场算**：挑战是一次性的，难度 144000。算法是 SHA3-256(`prefix || challenge || 十进制answer`)，直接跑官网那颗 26KB 的 wasm（`scripts/vendor/sha3_wasm_bg.wasm`，零 import，~20ms 解出），由 `scripts/pow-vendor.mjs` 以 base64 内联进函数，`tests/pow.test.ts` 钉住字节哈希和一组真实挑战/答案。
+- **一个 RPC 只能有一个签名**：PostgREST 遇到重载直接 PGRST203「无法选出最佳候选」。0006 加宽 `deepseek_ask/claim` 时留了旧签名，凡是省略尾部参数的调用全部失败 —— 线上前端每次都传全参数所以看不出来，dev 脚本的 `drainDeepseekQueue()` 反而把 PGRST203 读成「队列是空的」，积压就此产生（0007 清掉旧签名，`npm run test:db` 里断言没有任何重载）。
 - **一条回复由多个 fragment 组成**，类型有 `RESPONSE / THINK / SEARCH / TOOL_SEARCH / TOOL_OPEN / TOOL_FIND / TIP / FILE`。只有 `RESPONSE` 是答案；把全部内容拼起来会把工具噪音混进正文，还会丢每个新 fragment 的首块。
 - **`[citation:N]` 按 `cite_index` 查**，不是按数组顺序（官网的 `convertCiteIndexToListIndex` 同理）。前端不渲染引用，只在合适位置显示「已调用工具：网页搜索 · 6 个结果」。
 - **`WIP` 是正常终态**（停止或纯工具回答），不能当失败。
@@ -138,7 +139,7 @@ npm run dev                                           # http://127.0.0.1:5173
 
 ```bash
 npm test              # 156 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
-npm run test:db       # 97 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
+npm run test:db       # 99 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
 npm run test:browser  # 43 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记、后台隐藏、粘贴登录态
@@ -178,6 +179,7 @@ supabase/migrations/     0001 剪贴板（允许列表 / 令牌 / RLS / 限流 /
                          0004 转发心跳（deepseek_worker / deepseek_heartbeat / workers_alive）
                          0005 后台粘贴登录字符串走 PostgREST（tools_secret 摘要 + 猜错限流）
                          0006 命名队列（default = 线上，test = 测试）
+                         0007 一个 RPC 一个签名（删掉旧重载：PostgREST 无法重载解析）
 supabase/functions/      deepseek-chat（Edge Function 入口：SSE + 凭据动作）
                          _shared/relay.ts         一轮转发的全部流程（Edge 与 node 共用）
                          _shared/credential.ts    一个字符串 → 需要的数据（浏览器/脚本/函数共用）
