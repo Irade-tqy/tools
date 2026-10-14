@@ -6,7 +6,9 @@
 //   node scripts/pages-deploy.mjs --workflow # switch an existing site to Actions builds
 //   node scripts/pages-deploy.mjs --push     # …then git push origin <branch>
 import { execFileSync } from 'node:child_process';
-import { env, ghRepo } from './lib.mjs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { env, ghRepo, rootDir } from './lib.mjs';
 
 const token = (env.TOOLS_GH_TOKEN || '').trim();
 if (!token) {
@@ -108,30 +110,40 @@ if (process.argv.includes('--push')) {
     console.log('pushing to origin …');
   }
   execFileSync('git', ['push', 'origin', `${branch}`], { stdio: 'inherit' });
-  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  // Polling the workflow run by head_sha is unreliable: GitHub attributes the run to the newest
+  // commit that touches non-ignored paths, so a script-only commit pushed alongside it leaves
+  // the query waiting for a run that already finished under another sha. The artifact the CDN
+  // serves cannot lie, so compare the live page against the entry file this checkout builds.
+  const distIndex = join(rootDir, 'dist', 'index.html');
+  if (!existsSync(distIndex)) {
+    console.log('building to know which bundle to expect …');
+    execFileSync('npm', ['run', 'build'], { stdio: 'inherit' });
+  }
+  const expected = readFileSync(distIndex, 'utf8').match(/assets\/index-[\w-]+\.js/)?.[0];
+  if (!expected) {
+    console.error('dist/index.html does not reference a hashed entry — run npm run build');
+    process.exit(1);
+  }
 
   if (!workflowBuild) process.exit(0);
 
-  console.log(`waiting for the Deploy Pages workflow to publish ${sha.slice(0, 7)} …`);
+  const site = (info.html_url || '').replace(/\/+$/, '');
+  console.log(`waiting for ${site} to serve ${expected} …`);
   const deadline = Date.now() + 10 * 60 * 1000;
-  let run = null;
+  let served = null;
   while (Date.now() < deadline) {
+    const res = await fetch(`${site}/?deploycheck=${Date.now()}`, { headers: { 'cache-control': 'no-cache' } });
+    served = res.ok ? (await res.text()).match(/assets\/index-[\w-]+\.js/)?.[0] || null : null;
+    if (served === expected) break;
+    if (served) console.log(`  still serving ${served}`);
     await new Promise((r) => setTimeout(r, 15_000));
-    const runs = await api(`/repos/${repo}/actions/workflows/deploy.yml/runs?head_sha=${sha}&per_page=1`);
-    const body = await runs.json().catch(() => ({}));
-    run = body?.workflow_runs?.[0];
-    if (!run) continue;
-    console.log(`  ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ''}`);
-    if (run.status === 'completed') break;
   }
 
-  if (!run) {
-    console.error('no Deploy Pages run appeared for this commit — check Actions → Deploy Pages');
+  if (served !== expected) {
+    console.error(`the live site never started serving ${expected} (last seen: ${served || 'nothing'})`);
+    console.error('check Actions → Deploy Pages for a failed run');
     process.exit(1);
   }
-  if (run.conclusion !== 'success') {
-    console.error(`deploy ${run.conclusion}: ${run.html_url}`);
-    process.exit(1);
-  }
-  console.log(`published: ${info.html_url || ''}`);
+  console.log(`published: ${site}/  (${expected})`);
 }
