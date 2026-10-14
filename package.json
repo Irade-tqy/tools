@@ -14,7 +14,7 @@
     "test:db": "node scripts/db-test.mjs",
     "test:function": "node scripts/function-local.mjs",
     "test:browser": "npm run build && node scripts/browser-smoke.mjs",
-    "test:all": "npm test && npm run test:db && npm run test:function && npm run test:worker && npm run test:browser",
+    "test:all": "npm test && npm run test:db && npm run test:function && npm run test:worker && npm run test:browser && npm run test:live && npm run test:live:outage",
     "check:generated": "node scripts/defaults-sync.mjs --check && node scripts/pow-vendor.mjs --check",
     "db:push": "node scripts/db-push.mjs",
     "db:status": "node scripts/db-push.mjs --status",
@@ -40,6 +40,7 @@
     "relay:status": "node scripts/relay-service.mjs status",
     "relay:logs": "node scripts/relay-service.mjs logs",
     "test:live": "node scripts/live-smoke.mjs",
+    "test:live:outage": "node scripts/live-outage.mjs",
     "admin:secret": "node scripts/admin-secret.mjs"
   },
   "dependencies": {
