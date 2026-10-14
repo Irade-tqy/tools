@@ -20,7 +20,7 @@ if (!repo) {
   process.exit(1);
 }
 
-const api = (path, init = {}) =>
+const apiCall = async (path, init = {}) =>
   fetch(`https://api.github.com${path}`, {
     ...init,
     headers: {
@@ -30,6 +30,23 @@ const api = (path, init = {}) =>
       ...(init.headers || {}),
     },
   });
+
+// api.github.com drops the TLS connection on us every so often, and a deploy script that dies
+// with an ECONNRESET stack trace in front of the operator is a false alarm. Retry the transient
+// ones, then fail with a sentence.
+async function api(path, init = {}, attempts = 3) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await apiCall(path, init);
+    } catch (err) {
+      lastError = err;
+      if (attempt < attempts) await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
+  }
+  console.error(`GitHub API unreachable after ${attempts} attempts: ${lastError?.message || lastError}`);
+  process.exit(1);
+}
 
 const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
 
