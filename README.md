@@ -20,7 +20,7 @@
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
-线上还差的只有一件事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 或 `gh variable set SUPABASE_DEPLOY --body on`，都需要一个 Supabase 个人访问令牌 `sbp_…`）。**不影响可用性** —— 转发通道已经在跑（见下节）。
+线上还差的只有一件事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 或 `gh variable set SUPABASE_DEPLOY --body on`，都需要一个 Supabase 个人访问令牌 `sbp_…`）。**不影响可用性** —— 转发通道已经在跑（见下节）。没 token 时先跑 `npm run functions:deploy -- --dry-run`：它用 `deno check` 校验函数、并报出源码体积（当前 106.8 KB，限额 4 MB），部署前能查的都查完。
 
 ## DeepSeek 转发
 
@@ -164,7 +164,7 @@ SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 
 ```bash
 npm run secrets:sync        # TOOLS_ADMIN_TOKEN / DEEPSEEK_CREDENTIAL → Supabase secrets
-npm run functions:deploy    # 部署 supabase/functions/deepseek-chat（--no-verify-jwt）
+npm run functions:deploy    # 部署 supabase/functions/deepseek-chat（--no-verify-jwt）；--dry-run = deno check + 体积报告（不需令牌）
 ```
 
 登录态本身存在数据库里，所以**轮换登录态不需要重新部署**；只有改函数代码时才要重新 deploy。
