@@ -7,7 +7,7 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
-import { anonKey, drainDeepseekQueue, env, supabaseUrl } from './lib.mjs';
+import { anonKey, clearDeepseekBacklog, env, supabaseUrl } from './lib.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const PORT = Number(process.env.SMOKE_PORT || 4178);
@@ -178,8 +178,8 @@ try {
   const answerText = '收到，这是模拟通道的流式回答。';
   const secondAnswer = '继续同一会话的回复';
 
-  const drained = await drainDeepseekQueue('smoke-setup');
-  check(`the deepseek queue starts empty (drained ${drained} stale job(s))`, true);
+  const drained = await clearDeepseekBacklog({ workerId: 'smoke-setup' });
+  check(`the deepseek queue starts empty (cleared ${drained.closed} stale + ${drained.drained} queued job(s))`, true);
 
   // Start from an empty shared clipboard so list assertions are unambiguous.
   const boot = await rpc('clipboard_verify', { p_password: password(), p_ttl_seconds: 600 });
@@ -460,7 +460,7 @@ try {
 } catch (err) {
   check(`smoke run crashed: ${err.message}`, false, err.stack || '');
 } finally {
-  await drainDeepseekQueue('smoke-cleanup').catch(() => {});
+  await clearDeepseekBacklog({ workerId: 'smoke-cleanup' }).catch(() => {});
   if (browser) await browser.close().catch(() => {});
   if (server) server.close();  const failed = results.filter((r) => !r.pass);
   console.log(`\n${results.length - failed.length}/${results.length} browser checks passed`);

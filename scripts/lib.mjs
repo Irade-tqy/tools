@@ -116,6 +116,35 @@ export async function drainDeepseekQueue(workerId = 'drain') {
   return drained;
 }
 
+/**
+ * Close jobs a dead relay left behind. A row stuck in claimed/streaming keeps counting
+ * against deepseek_ask's backlog limit (>=10 pending → rate_limited), which is how a killed
+ * test worker can make every later enqueue fail. Closes them over SQL (dev scripts only) and
+ * then drains whatever is still queued.
+ */
+export async function clearDeepseekBacklog({ olderThanSeconds = 20, workerId = 'drain' } = {}) {
+  const client = await connectDb();
+  let closed = 0;
+  try {
+    const res = await client.query(
+      `update public.deepseek_job
+          set status = 'error',
+              error = 'closed: relay went away mid-turn',
+              finished_at = now(),
+              metrics = metrics || jsonb_build_object('closed_at', now(), 'closed_by', $2::text)
+        where status in ('claimed', 'streaming')
+          and coalesce(claimed_at, created_at) < now() - ($1::int * interval '1 second')
+        returning id`,
+      [olderThanSeconds, workerId],
+    );
+    closed = res.rowCount ?? res.rows.length;
+  } finally {
+    await client.end().catch(() => {});
+  }
+  const drained = await drainDeepseekQueue(workerId);
+  return { closed, drained };
+}
+
 // Resolve "owner/repo" from TOOLS_GH_REPO or the origin remote.
 export function ghRepo() {
   const explicit = (env.TOOLS_GH_REPO || '').trim();

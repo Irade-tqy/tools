@@ -3,7 +3,7 @@
 静态站点（GitHub Pages）+ Supabase 的工具箱，线上地址 **https://irade-tqy.github.io/tools/** 。
 
 - **云剪贴板**：共享模式。密码来自服务端允许列表，验证后拿到临时令牌；所有已验证用户看到同一份内容。文本明文存储，文件在浏览器内用 AES-GCM 加密后再上传。条目默认保留 7 天，访问时顺带清理过期项。
-- **DeepSeek 对话**：Edge Function 用 DeepSeek 官网自己的会话协议转发，流式回传；**支持同一个会话继续追问，也可以一键新开会话**。界面显示首字延迟、排队时间、相对上游的额外耗时，以及「已调用工具」标记（官网调了搜索/打开页面时）。
+- **DeepSeek 对话**：转发通道（常驻进程 / Edge Function，同一份代码）用 DeepSeek 官网自己的会话协议转发，流式回传；**支持同一个会话继续追问，也可以一键新开会话**。界面显示首字延迟、排队时间、相对上游的额外耗时，以及「已调用工具」标记（官网调了搜索/打开页面时）。
 - **后台**：线上默认不显示。只有 URL 带 `?admin=1` 才会出现「后台」标签页（DeepSeek 登录态输入框、队列计数、自托管覆盖项）。
 
 代码是公开的，里面只有**公开值**：Supabase 地址、anon key、Edge Function 名已内置在 `src/lib/defaults.ts`（anon key 本来就是客户端公开凭据，数据边界是 RLS；`tests/defaults.test.ts` 会拦住误提交的非 anon key）。真正的密钥 —— service role key、数据库密码、剪贴板密码、管理令牌、DeepSeek 登录态 —— 不进仓库。
@@ -12,14 +12,15 @@
 
 | 部分 | 状态 |
 | --- | --- |
-| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态存储） | 已应用到线上项目，**79 项**端到端检查通过（`npm run test:db`） |
-| 单元测试 | **145 项**通过（`npm test`），含录制的 DeepSeek 真实流回放 |
-| Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；**线上未部署** —— 缺一个 Supabase access token |
+| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳） | 已应用到线上项目，**86 项**端到端检查通过（`npm run test:db`） |
+| 单元测试 | **155 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
+| 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列） |
+| Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
 | 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **37 项**检查通过（`npm run test:browser`） |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
-线上唯一没做的事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 需要一个 Supabase 个人访问令牌 `sbp_…`）。在它部署之前，线上打开站点仍然能用剪贴板；DeepSeek 对话会排队等待通道。
+线上还差的只有一件事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 或 `gh variable set SUPABASE_DEPLOY --body on`，都需要一个 Supabase 个人访问令牌 `sbp_…`）。**不影响可用性** —— 转发通道已经在跑（见下节）。
 
 ## DeepSeek 转发
 
@@ -44,6 +45,28 @@ POST /api/v0/chat/completion             {chat_session_id, parent_message_id, pr
 - **一条回复由多个 fragment 组成**，类型有 `RESPONSE / THINK / SEARCH / TOOL_SEARCH / TOOL_OPEN / TOOL_FIND / TIP / FILE`。只有 `RESPONSE` 是答案；把全部内容拼起来会把工具噪音混进正文，还会丢每个新 fragment 的首块。
 - **`[citation:N]` 按 `cite_index` 查**，不是按数组顺序（官网的 `convertCiteIndexToListIndex` 同理）。前端不渲染引用，只在合适位置显示「已调用工具：网页搜索 · 6 个结果」。
 - **`WIP` 是正常终态**（停止或纯工具回答），不能当失败。
+
+### 转发通道（relay）：两个宿主，一份协议
+
+浏览器只做两件事：`deepseek_ask()` 排队，然后从 `deepseek_chunk` 读答案（Realtime，带轮询兜底，SSE 只是加速）。**转发进程不需要被外界访问**，只要有出站 HTTPS —— 所以同一份协议可以跑在两种宿主上，代码都在 `supabase/functions/_shared/relay.ts`：
+
+| 宿主 | 入口 | 状态 |
+| --- | --- | --- |
+| 常驻进程（node） | `scripts/deepseek-worker.mjs` → `tools-relay.service` | **线上正在服务** |
+| Supabase Edge Function（Deno） | `supabase/functions/deepseek-chat/index.ts` | 待部署，部署后自动多一个通道 |
+
+```bash
+npm run relay:install    # 写 systemd user unit + enable --now + linger（重启后自己在）
+npm run relay:status     # systemctl --user status tools-relay
+npm run relay:logs       # .tmp/relay.log 尾部
+npm run relay:stop       # 停（前端会明确说「没有通道在领取任务」）
+```
+
+转发进程每轮重新读一次数据库里的登录态，所以**换登录态不用重启转发**。
+
+**心跳（0004）**：`deepseek_worker` 表一行一个通道，`deepseek_claim` 本身就是心跳 —— 空队列时也刷新 `seen_at`。`deepseek_health()` 的 `workers_alive` 数的是「30 秒内有心跳的通道」，不是「30 秒内领过活」，所以「空闲」和「没人服务」从此分得开；`workers` 数组（id / kind / turns / 距上次心跳秒数）只在隐藏后台展示。这张表 anon 读不到（revoke 掉了），浏览器只能通过 RPC 看。
+
+**落库顺序是硬约束**：`deepseek_chunk` 必须全部写完才能 `deepseek_complete()`。complete 一旦先落地，服务端就把后续 append 判成 `job_done` 丢掉，`done` 帧（会话 id、标题、计时）就永远进不了库 —— 只轮询的客户端于是无法继续同一会话。实测踩过：130 个 chunk 只落了 124 个。现在 `ChunkSink.flush()` 会等齐所有在途写入，单次 append 失败退避重试、只丢那一块（`metrics.chunks_written` / `chunk_stop_reason` 会把它暴露出来），`tests/relay.test.ts` 把这几种情形都钉住了。
 
 ### 一个字符串换到所有需要的数据
 
@@ -99,8 +122,9 @@ npm run dev                                           # http://127.0.0.1:5173
 ## 测试
 
 ```bash
-npm test              # 145 项单元测试（credential 解析 / 流回放 / PoW / reducer / session / api / config / crypto / render）
-npm run test:db       # 79 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
+npm test              # 155 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
+npm run test:db       # 86 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
+npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
 npm run test:browser  # 37 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记、后台隐藏
 npm run test:all      # 全部跑一遍
@@ -116,7 +140,9 @@ SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 
 **Pages**：push main → `Deploy Pages` 工作流跑 `npm run build` → `actions/deploy-pages` 发布 `dist/`。构建用相对路径，换仓库名或子目录都不用改配置。`CI` 工作流跑 typecheck + 构建 + 单测 + 生成物校验（线上测试用仓库变量 `LIVE_TESTS` / `BROWSER_TESTS` 开关）。
 
-**Edge Function**（需要 `SUPABASE_ACCESS_TOKEN=sbp_…`，Dashboard → Account → API Keys → Personal access token）：
+**转发通道**：`npm run relay:install`（systemd user + linger，重启后自动在）。停掉它前端不会崩，只会明说「没有通道在领取任务」。
+
+**Edge Function**（可选的第二通道，需要 `SUPABASE_ACCESS_TOKEN=sbp_…`，Dashboard → Account → API Keys → Personal access token）：
 
 ```bash
 npm run secrets:sync        # TOOLS_ADMIN_TOKEN / DEEPSEEK_CREDENTIAL → Supabase secrets
@@ -133,14 +159,17 @@ npm run functions:deploy    # 部署 supabase/functions/deepseek-chat（--no-ver
 supabase/migrations/     0001 剪贴板（允许列表 / 令牌 / RLS / 限流 / 7 天 TTL）
                          0002 DeepSeek 队列（job / chunk / Realtime / 指标）
                          0003 登录态入库 + 会话字段 + 会话化 RPC
-supabase/functions/      deepseek-chat（Edge Function 入口）
+                         0004 转发心跳（deepseek_worker / deepseek_heartbeat / workers_alive）
+supabase/functions/      deepseek-chat（Edge Function 入口：SSE + 凭据动作）
+                         _shared/relay.ts         一轮转发的全部流程（Edge 与 node 共用）
                          _shared/credential.ts    一个字符串 → 需要的数据（浏览器/脚本/函数共用）
                          _shared/web-client.ts    官网协议：挑战 / 会话 / completion
                          _shared/web-stream.ts    流解码：fragment 分类 / 工具 / 引用 / 标题
                          _shared/pow.ts + pow-wasm.ts  内联 wasm 解 PoW
 src/lib/                 config · api · crypto · sse · chat-reducer · session · render · editor · defaults
 src/views/               clipboard · chat · admin（后台，?admin=1 才显示）
-scripts/                 db-push · db-test · allowlist · function-local · browser-smoke · browser-relay ·
+scripts/                 db-push · db-test · worker-test · allowlist · function-local · browser-smoke ·
+                         browser-relay · relay-service（systemd 常驻转发）· deepseek-worker（常驻转发）·
                          deepseek-credential（登录字符串入口）· deepseek-pow-node（命令行跑上游）·
                          pow-vendor · defaults-sync · secrets-sync · functions-deploy · pages-*
 tests/                   vitest 单元测试 + tests/fixtures/stream-*.txt（录制的真实上游流）
@@ -153,6 +182,7 @@ tests/                   vitest 单元测试 + tests/fixtures/stream-*.txt（录
 - **后台入口**：`?admin=1` 只是显示开关，真正的门是 `TOOLS_ADMIN_TOKEN`（常量时间比较）；没配这个 secret 时后台的写操作直接返回 501。
 - **允许列表 / 令牌 / 限流**：`clipboard_secret` 存 bcrypt；`clipboard_verify` 发 256 位随机令牌，库里只存 sha256；同一密码 15 分钟最多 10 次失败，全局 5 分钟最多 120 次，失败记录只存 `sha256(密码|日期)`。
 - **RLS**：剪贴板四张表全部开启 RLS 且没有策略，写操作只能走 `SECURITY DEFINER` 的 RPC；`deepseek_job` / `deepseek_chunk` 允许 anon 读（Realtime 的 RLS 授权需要），写仍只能走 RPC。
+- **转发心跳**：`deepseek_worker` 只有 `service_role` 能 select，EXECUTE 只给 RPC，浏览器读不到表本身（`npm run test:db` 里断言 401/403）。
 - **文件**：PBKDF2-SHA256/150000 派生 AES-256-GCM 密钥，IV 与 salt 每条随机；库里只有密文。换密码后旧文件解不开，这是设计而非 bug。
 - **限流**：对话全局 1 分钟最多 20 条、同时在飞最多 10 条；worker 卡死 3 分钟自动回队。
 

@@ -28,15 +28,7 @@ import {
   type DeepSeekCredential,
 } from '../_shared/credential.ts';
 import { DeepSeekWebClient, type ModelType } from '../_shared/web-client.ts';
-import {
-  applyWebFrame,
-  createWebFrameParser,
-  createWebStreamState,
-  resolveCitations,
-  toolSummary,
-  type WebStreamState,
-  type WebTool,
-} from '../_shared/web-stream.ts';
+import { runRelayTurn, TRANSPORT_EDGE, type RelayPayload } from '../_shared/relay.ts';
 
 const SUPABASE_URL = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/+$/, '');
 const SERVICE_KEY =
@@ -132,84 +124,7 @@ async function resolveCredential(): Promise<{ credential: DeepSeekCredential; or
 }
 
 // ---------------------------------------------------------------------------
-// chunk fan-out (SSE + deepseek_chunk)
-// ---------------------------------------------------------------------------
-
-const MAX_RESULTS_PER_TOOL = 20;
-const SNIPPET_CHARS = 160;
-
-interface OutTool {
-  id: number;
-  type: string;
-  status: string;
-  label: string;
-  queries: string[];
-  results: { cite_index: number | null; title: string; url: string; site_name: string; snippet: string }[];
-  page: { url: string; title: string } | null;
-}
-
-function outboundTool(tool: WebTool): OutTool {
-  return {
-    id: tool.id,
-    type: tool.type,
-    status: tool.status,
-    label: tool.label.slice(0, 200),
-    queries: tool.queries.slice(0, 10),
-    results: tool.results.slice(-MAX_RESULTS_PER_TOOL).map((r) => ({
-      cite_index: r.cite_index,
-      title: r.title,
-      url: r.url,
-      site_name: r.site_name,
-      snippet: r.snippet.slice(0, SNIPPET_CHARS),
-    })),
-    page: tool.page,
-  };
-}
-
-/** Buffered writer: a DB round-trip must never serialise behind a token. */
-class ChunkSink {
-  private queue: { seq: number; payload: unknown }[] = [];
-  private flushing = false;
-  private timer: number | null = null;
-  seq = 0;
-  cancelled = false;
-
-  constructor(private jobId: string) {}
-
-  push(payload: unknown): void {
-    this.queue.push({ seq: this.seq++, payload });
-    if (this.queue.length >= 8) void this.flush();
-    else if (!this.timer) {
-      this.timer = setTimeout(() => {
-        this.timer = null;
-        void this.flush();
-      }, 250) as unknown as number;
-    }
-  }
-
-  async flush(): Promise<void> {
-    if (this.flushing || !this.queue.length) return;
-    this.flushing = true;
-    const batch = this.queue.splice(0, this.queue.length);
-    for (const item of batch) {
-      const out = await rpc('deepseek_append', { p_job_id: this.jobId, p_seq: item.seq, p_payload: item.payload });
-      if (!out.ok) {
-        // job_cancelled / job_done server-side: stop writing, the caller stops streaming.
-        if (typeof out.error === 'string' && out.error.startsWith('job_')) this.cancelled = true;
-        break;
-      }
-    }
-    this.flushing = false;
-  }
-
-  cancelTimer(): void {
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = null;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// the relay
+// the relay — the protocol lives in ../_shared/relay.ts, this file is plumbing only
 // ---------------------------------------------------------------------------
 
 interface TurnRequest {
@@ -225,169 +140,53 @@ interface TurnRequest {
 async function runTurn(turn: TurnRequest): Promise<Response> {
   const resolved = await resolveCredential();
   if ('error' in resolved) {
-    return json({ ok: false, error: resolved.error, transport: 'edge-web' }, 503);
-  }
-  const { credential, origin } = resolved;
-  const client = new DeepSeekWebClient(credential);
-
-  let jobId = turn.jobId;
-  if (!jobId) {
-    const enqueued = await rpc('deepseek_ask', {
-      p_prompt: turn.prompt,
-      p_session_id: turn.sessionId,
-      p_parent_message_id: turn.parentMessageId ? Number(turn.parentMessageId) : null,
-      p_model_type: turn.modelType,
-      p_thinking: turn.thinking,
-      p_search: turn.search,
-    });
-    if (!enqueued.ok) return json(enqueued, 400);
-    jobId = String(enqueued.job_id ?? '');
+    return json({ ok: false, error: resolved.error, transport: TRANSPORT_EDGE }, 503);
   }
 
-  const claim = await rpc('deepseek_claim', { p_worker_id: WORKER_ID, p_job_id: jobId });
-  if (!claim.claimed) {
-    return json({ ok: false, error: 'not_claimed', job_id: jobId, reason: claim.reason ?? 'busy' }, 409);
-  }
-  const prompt = typeof claim.prompt === 'string' && claim.prompt ? claim.prompt : turn.prompt;
-  let sessionId = typeof claim.session_id === 'string' && claim.session_id ? claim.session_id : turn.sessionId;
-  const parentId = typeof claim.parent_message_id === 'string' ? claim.parent_message_id : turn.parentMessageId;
-  const modelType = (typeof claim.model_type === 'string' ? claim.model_type : turn.modelType) as ModelType;
-  const thinking = typeof claim.thinking_enabled === 'boolean' ? claim.thinking_enabled : turn.thinking;
-  const search = typeof claim.search_enabled === 'boolean' ? claim.search_enabled : turn.search;
-
-  const sink = new ChunkSink(jobId);
   const encoder = new TextEncoder();
-  const state: WebStreamState = createWebStreamState();
-  const startedAt = Date.now();
-  let upstreamTtftMs: number | null = null;
-  let powMs: number | null = null;
 
-  const send = (controller: ReadableStreamDefaultController<Uint8Array>, payload: unknown) => {
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-  };
-
+  // Enqueue straight through: a token must not wait for a DB round-trip, and holding frames
+  // back would turn a streaming answer into one big blob at the end.
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      let errorText: string | null = null;
-
-      const emit = (delta: { text: string; thinking: string; tool: WebTool | null }) => {
-        if (delta.text) {
-          if (upstreamTtftMs === null) upstreamTtftMs = Date.now() - startedAt;
-          const payload = { v: 1, _transport: 'edge-web', text: delta.text };
-          sink.push(payload);
-          send(controller, payload);
-        }
-        if (delta.thinking) {
-          const payload = { v: 1, _transport: 'edge-web', thinking: delta.thinking };
-          sink.push(payload);
-          send(controller, payload);
-        }
-        if (delta.tool) {
-          const payload = { v: 1, _transport: 'edge-web', tool: outboundTool(delta.tool) };
-          sink.push(payload);
-          send(controller, payload);
+      const send = (payload: RelayPayload | string) => {
+        const frame = typeof payload === 'string' ? `data: ${payload}\n\n` : `data: ${JSON.stringify(payload)}\n\n`;
+        try {
+          controller.enqueue(encoder.encode(frame));
+        } catch {
+          /* the client hung up mid-stream; the DB copy still completes */
         }
       };
-
       try {
-        // DeepSeek's completion endpoint refuses chat_session_id: null — a new conversation
-        // has to create its session first, which is also what the web app does.
-        const t0 = Date.now();
-        if (!sessionId) {
-          const created = await client.createSession();
-          sessionId = created.id;
+        const result = await runRelayTurn(
+          {
+            rpc,
+            credential: resolved.credential,
+            workerId: WORKER_ID,
+            origin: resolved.origin,
+            transport: TRANSPORT_EDGE,
+            emit: send,
+          },
+          {
+            jobId: turn.jobId,
+            prompt: turn.prompt,
+            sessionId: turn.sessionId,
+            parentMessageId: turn.parentMessageId,
+            modelType: turn.modelType,
+            thinking: turn.thinking,
+            search: turn.search,
+          },
+        );
+        if (result.status === 'not_claimed') {
+          send({ v: 1, _transport: TRANSPORT_EDGE, error: `not_claimed: ${result.error}`, job_id: result.jobId });
         }
-        const response = await client.completion({
-          prompt,
-          chatSessionId: sessionId,
-          parentMessageId: parentId,
-          modelType,
-          thinking,
-          search,
-        });
-        powMs = Date.now() - t0;
-
-        if (!response.body) throw new Error('upstream returned no body');
-        const parse = createWebFrameParser();
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          for (const frame of parse(decoder.decode(value, { stream: true }))) {
-            applyWebFrame(state, frame, emit);
-            if (sink.cancelled) {
-              await reader.cancel().catch(() => {});
-              break;
-            }
-          }
+        if (result.status === 'enqueue_failed') {
+          send({ v: 1, _transport: TRANSPORT_EDGE, error: result.error, done: true, ok: false });
         }
-        for (const frame of parse.flush()) applyWebFrame(state, frame, emit);
-        if (state.failed) errorText = state.failed;
-        if (!state.finished && !errorText && !state.text) errorText = 'upstream closed without an answer';
-      } catch (err) {
-        errorText = (err as Error).message;
+        send('[DONE]');
+      } finally {
+        controller.close();
       }
-
-      const finishedAt = Date.now();
-      const summary = toolSummary(state);
-      const citations = resolveCitations(state);
-
-      const donePayload = {
-        v: 1,
-        _transport: 'edge-web',
-        done: true,
-        job_id: jobId,
-        ok: !errorText,
-        session_id: sessionId,
-        reply_message_id: state.responseMessageId,
-        title: state.title,
-        mode: state.mode,
-        search_triggered: state.searchTriggered,
-        token_usage: state.tokenUsage,
-        tools: state.tools.filter((t) => t.type !== 'UNKNOWN').map(outboundTool),
-        citations: citations.slice(0, 30),
-        error: errorText,
-      };
-      sink.push(donePayload);
-      send(controller, donePayload);
-
-      sink.cancelTimer();
-      await sink.flush();
-
-      const metrics = {
-        upstream_ttft_ms: upstreamTtftMs ?? 0,
-        upstream_total_ms: finishedAt - startedAt,
-        pow_and_connect_ms: powMs ?? 0,
-        chunks: sink.seq,
-        frames: state.frames,
-        credential_origin: origin,
-        conversation_mode: state.mode,
-        tool_kinds: summary.kinds.join(','),
-        tool_results: summary.resultCount,
-        token_usage: state.tokenUsage,
-      };
-
-      await rpc('deepseek_complete', {
-        p_job_id: jobId,
-        p_ok: !errorText,
-        p_error: errorText,
-        p_metrics: metrics,
-        p_session_id: sessionId,
-        p_reply_message_id: state.responseMessageId,
-        p_title: state.title || null,
-      });
-
-      // Keep the credential's health visible: a 401-ish failure should show up in the
-      // status strip as "登录过期" instead of a raw upstream error.
-      await rpc('deepseek_credential_report', {
-        p_ok: !errorText || !/HTTP 40[13]|unauthorized|invalid|expired/i.test(errorText ?? ''),
-        p_error: errorText,
-      });
-
-      send(controller, '[DONE]');
-      controller.close();
     },
   });
 

@@ -5,7 +5,7 @@
 //
 //   node scripts/db-test.mjs
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from 'node:crypto';
-import { anonKey, connectDb, drainDeepseekQueue, env, projectRef, rpc, serviceRoleKey, supabaseUrl } from './lib.mjs';
+import { anonKey, clearDeepseekBacklog, connectDb, env, projectRef, rpc, serviceRoleKey, supabaseUrl } from './lib.mjs';
 
 // Mirrors src/lib/crypto.ts (WebCrypto AES-GCM + PBKDF2-SHA256/150000). WebCrypto
 // appends the 16-byte GCM tag to the ciphertext, so the tag is concatenated here too.
@@ -66,8 +66,8 @@ async function rest(path, { method = 'GET', headers = {}, body } = {}) {
 async function main() {
   if (!supabaseUrl) throw new Error('TOOLS_SUPABASE_URL missing');
   const password = firstPassword();
-  const drained = await drainDeepseekQueue('db-test-setup');
-  console.log(`target: ${projectRef}  (anon key ${anonKey().slice(0, 8)}…, drained ${drained} queued job(s))\n`);
+  const drained = await clearDeepseekBacklog({ workerId: 'db-test-setup' });
+  console.log(`target: ${projectRef}  (anon key ${anonKey().slice(0, 8)}…, cleared ${drained.closed} stale + ${drained.drained} queued job(s))\n`);
 
   // ---- auth -----------------------------------------------------------------
   let r = await rpc('clipboard_list', {});
@@ -386,6 +386,36 @@ async function main() {
   check('health reports credential state for the status strip', r.body?.credential_configured === true && 'credential_age_minutes' in r.body, r.body);
   check('health reports the median upstream first-token time', typeof r.body?.median_ttft_ms === 'number' && r.body.median_ttft_ms > 0, r.body);
 
+  // --- relay liveness (0004): the status strip must tell "nobody is serving" from "idle" ---
+  const relayId = `test-relay-${Date.now().toString(36)}`;
+  r = await rpc('deepseek_heartbeat', { p_worker_id: relayId, p_kind: 'relay' });
+  check('a relay can heartbeat by id', r.body?.ok === true && r.body?.worker_id === relayId, r.body);
+  r = await rpc('deepseek_health', {});
+  check('a heartbeating relay counts as alive', Number(r.body?.workers_alive) >= 1, r.body);
+  check('health lists the live relays', Array.isArray(r.body?.workers) && r.body.workers.some((w) => w.worker_id === relayId), r.body);
+
+  // An idle relay claims nothing, so the claim itself has to keep it counted.
+  const idleId = `test-idle-${Date.now().toString(36)}`;
+  await clearDeepseekBacklog({ workerId: 'db-test-idle' });
+  r = await rpc('deepseek_claim', { p_worker_id: idleId });
+  check('an idle claim finds no work', r.body?.ok === true && r.body?.claimed === false, r.body);
+  r = await rpc('deepseek_health', {});
+  check('an idle relay still counts as alive', r.body?.workers?.some((w) => w.worker_id === idleId) === true && Number(r.body?.workers_alive) >= 1, r.body);
+
+  await db.query("update public.deepseek_worker set seen_at = now() - interval '5 minutes' where worker_id = $1", [idleId]);
+  r = await rpc('deepseek_health', {});
+  check('a relay that stopped heartbeating stops counting', r.body?.workers?.some((w) => w.worker_id === idleId) !== true, r.body);
+
+  // PostgREST answers 401/403 for a revoked table (and [] would be fine too) — the point is
+  // that the browser learns relay liveness from deepseek_health(), not by reading the table.
+  const workerTable = await rest('deepseek_worker?select=*');
+  check(
+    'the browser cannot read the worker table directly',
+    workerTable.status === 401 || workerTable.status === 403 || workerTable.text.trim() === '[]',
+    `HTTP ${workerTable.status} ${workerTable.text.slice(0, 120)}`,
+  );
+  await db.query('delete from public.deepseek_worker where worker_id in ($1, $2)', [relayId, idleId]);
+
   // worker timeout requeue
   await db.query('update public.deepseek_job set status=$1, claimed_at = now() - interval \'10 minutes\' where id = $2', ['claimed', cancelId]);
   r = await rpc('deepseek_claim', { p_worker_id: 'test-worker-4' });
@@ -399,7 +429,7 @@ try {
 } catch (err) {
   check(`unexpected error: ${err.message}`, false, err.stack || '');
 } finally {
-  await drainDeepseekQueue('db-test-cleanup').catch(() => {});
+  await clearDeepseekBacklog({ workerId: 'db-test-cleanup' }).catch(() => {});
   if (db) await db.end().catch(() => {});
   const failed = results.filter((x) => !x.pass);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
