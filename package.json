@@ -21,6 +21,8 @@
     "allowlist": "node scripts/allowlist.mjs",
     "secrets:sync": "node scripts/secrets-sync.mjs",
     "deepseek:login": "node scripts/deepseek-login.mjs",
+    "deepseek:relay": "node scripts/browser-relay.mjs",
+    "deepseek:upstream": "node scripts/deepseek-pow-node.mjs",
     "deepseek:probe": "node scripts/deepseek-probe.mjs",
     "functions:deploy": "node scripts/functions-deploy.mjs",
     "pages:deploy": "node scripts/pages-deploy.mjs",

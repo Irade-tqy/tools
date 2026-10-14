@@ -1,6 +1,6 @@
 // Shared loader for the local dev scripts. Reads ~/tools/.env.local (git-ignored) and
 // derives the handful of values the scripts need. Nothing here is ever committed.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -128,6 +128,45 @@ export function ghRepo() {
     /* not a git checkout */
   }
   return '';
+}
+
+/** Replace (or append) one KEY=value line in .env.local without exposing the value. */
+export function upsertEnvLocal(name, value, file = '.env.local') {
+  const path = resolve(rootDir, file);
+  const line = `${name}=${value}`;
+  if (!existsSync(path)) {
+    writeFileSync(path, `${line}\n`, { mode: 0o600 });
+    return path;
+  }
+  const text = readFileSync(path, 'utf8');
+  const next = new RegExp(`^${name}=.*$`, 'm').test(text)
+    ? text.replace(new RegExp(`^${name}=.*$`, 'm'), line)
+    : `${text.replace(/\n*$/, '')}\n${line}\n`;
+  writeFileSync(path, next, { mode: 0o600 });
+  return path;
+}
+
+/**
+ * Turn Playwright's cookie list into the Cookie header the DeepSeek upstream expects, and
+ * store it as DEEPSEEK_WEB_COOKIE. Returns a summary safe to print (names + length only).
+ */
+export function exportDeepseekCookie(cookies) {
+  const relevant = cookies.filter((c) => String(c.domain).includes('deepseek.com'));
+  const header = relevant.map((c) => `${c.name}=${c.value}`).join('; ');
+  if (!header) return { written: false, names: [], length: 0 };
+  upsertEnvLocal('DEEPSEEK_WEB_COOKIE', header);
+  return { written: true, names: relevant.map((c) => c.name), length: header.length };
+}
+
+/**
+ * The DeepSeek web app keeps its session in localStorage.userToken, not in a cookie, so the
+ * upstream needs `Authorization: Bearer <userToken>`. Store it as DEEPSEEK_WEB_TOKEN.
+ */
+export function exportDeepseekToken(token) {
+  const value = String(token || '').trim();
+  if (!value) return { written: false, length: 0 };
+  upsertEnvLocal('DEEPSEEK_WEB_TOKEN', value);
+  return { written: true, length: value.length };
 }
 
 export function mask(value, keep = 6) {

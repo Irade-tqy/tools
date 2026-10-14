@@ -66,12 +66,17 @@ if (pages.status === 404) {
   }
 }
 
-const info = await pages.json();
-console.log(`pages url: ${info.html_url}`);
-console.log(`status:    ${info.status || 'n/a'}  (builds appear as the "github-pages" check)`);
-
-if (new Set(process.argv.slice(2)).has('--push')) {
-  console.log(`pushing ${branch} …`);
-  execFileSync('git', ['push', 'origin', branch], { stdio: 'inherit' });
-  console.log('watch the Actions run, then open the URL above');
+// GitHub answers 204 (no body) for some of these calls, so re-read the settings instead of
+// parsing the response body.
+const fresh = await api(`/repos/${repo}/pages`);
+const raw = await fresh.text();
+let info = {};
+try {
+  info = raw ? JSON.parse(raw) : {};
+} catch {
+  info = {};
+}
+console.log(`pages url: ${info.html_url || '(unknown)'}  source: ${info.source?.build_type || info.build_type || 'classic'}  status: ${info.status || 'n/a'}`);
+if ((info.source?.build_type || info.build_type) === 'workflow') {
+  console.log('deploys now come from the “Deploy Pages” workflow (push to main or Actions → Run workflow)');
 }
