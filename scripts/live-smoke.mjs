@@ -210,6 +210,28 @@ try {
   const stored = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
   check('the deployed relay will use the pasted token', stored.body?.token === pasted, stored.body?.token?.slice(0, 8));
 
+  // 8. the failure a live deployment actually hits: DeepSeek stops accepting the stored login
+  // state. The bogus token pasted above is what the relay is holding right now, so this is the
+  // real path — not a stubbed 401.
+  await page.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+  await page.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
+  const broken = await send(page, '登录态失效测试：只回复 OK');
+  const brokenStatus = (await page.textContent('#chat-status')) || '';
+  check(
+    'an upstream rejection ends the turn with a visible error',
+    /错误/.test(brokenStatus) || /错误/.test(broken),
+    { brokenStatus, broken: broken.slice(0, 160) },
+  );
+  const healthBroken = await call('deepseek_health');
+  check('the failed turn is reported against the credential', Boolean(healthBroken.body?.credential_error), healthBroken.body?.credential_error);
+  // The strip refreshes on load and on an interval, so a reload is what a visitor would do.
+  await page.reload({ waitUntil: 'load' });
+  const strip = await page
+    .waitForFunction(() => /登录态/.test(document.getElementById('status-text')?.textContent || ''), null, { timeout: 20_000 })
+    .then(() => page.textContent('#status-text'))
+    .catch(() => page.textContent('#status-text'));
+  check('the status strip names the login state, not a raw error', /登录态/.test(strip || ''), strip);
+
   if (snapshot.body?.token) {
     await rpc(
       'deepseek_credential_set',
@@ -225,6 +247,14 @@ try {
     );
     const restored = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
     check('the live credential is restored after the run', restored.body?.token === snapshot.body.token, restored.body?.token?.slice(0, 8));
+
+    // Recovery: swapping the string back has to bring the service back on the very next turn.
+    await page.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+    await page.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
+    const recovered = await send(page, '恢复测试：只回复 OK');
+    check('replacing the credential brings the service back', /OK/.test(recovered), recovered.slice(0, 160));
+    const healthBack = await call('deepseek_health');
+    check('the credential error clears once a turn succeeds', !healthBack.body?.credential_error, healthBack.body?.credential_error);
   }
 } finally {
   await browser.close();
