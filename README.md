@@ -18,6 +18,7 @@
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
 | 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **44 项**检查通过（`npm run test:browser`，含故意乱序投递的块流），另有 **32 项**直接打线上站点（`npm run test:live`，含跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸） |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
+| CI（干净 runner，不靠这台机器） | **全绿**：生成物校验 + typecheck + 构建 + 单测，加上对真项目的 `db-push` / `db-test` **99/99** 与 Playwright 冒烟 **44/44**（走 session pooler 的 IPv4，见「本地开发」里的 IPv6 说明） |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
 线上还差的只有一件事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 或 `gh variable set SUPABASE_DEPLOY --body on`，都需要一个 Supabase 个人访问令牌 `sbp_…`）。**不影响可用性** —— 转发通道已经在跑（见下节）。没 token 时先跑 `npm run functions:deploy -- --dry-run`：它用 `deno check` 校验函数、并报出源码体积（当前 106.8 KB，限额 4 MB），部署前能查的都查完。
@@ -165,7 +166,7 @@ SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 
 ## 部署
 
-**Pages**：push main → `Deploy Pages` 工作流跑 `npm run build` → `actions/deploy-pages` 发布 `dist/`。构建用相对路径，换仓库名或子目录都不用改配置。`CI` 工作流跑 typecheck + 构建 + 单测 + 生成物校验（线上测试用仓库变量 `LIVE_TESTS` / `BROWSER_TESTS` 开关）。
+**Pages**：push main → `Deploy Pages` 工作流跑 `npm run build` → `actions/deploy-pages` 发布 `dist/`。构建用相对路径，换仓库名或子目录都不用改配置。`CI` 工作流在干净 runner 上跑：生成物校验 + typecheck + 构建 + 单测，以及（`LIVE_TESTS` / `BROWSER_TESTS` 已开）对真项目的 `db-push` + `db-test`（**99/99**）和 Playwright 浏览器冒烟（**44/44**）—— 全部在 GitHub 的机器上跑通，不依赖这台开发机。
 
 **转发通道**：`npm run relay:install`（systemd user + linger，重启后自动在）。停掉它前端不会崩，只会明说「没有通道在领取任务」。
 
