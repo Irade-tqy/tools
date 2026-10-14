@@ -74,7 +74,9 @@ export function serviceRoleKey() {
 }
 
 // Minimal PostgREST RPC client: no SDK, no build step, works from plain node.
-export async function rpc(fn, args, { key, token, method = 'POST' } = {}) {
+// timeoutMs matters for the long-running relay: a stalled connection would otherwise sit in
+// await forever, and a relay that stops claiming also stops heartbeating.
+export async function rpc(fn, args, { key, token, method = 'POST', timeoutMs = 0 } = {}) {
   const apiKey = key ?? anonKey();
   const url = `${supabaseUrl}/rest/v1/rpc/${fn}`;
   const headers = {
@@ -88,6 +90,7 @@ export async function rpc(fn, args, { key, token, method = 'POST' } = {}) {
     method,
     headers,
     body: method === 'GET' ? undefined : JSON.stringify(args ?? {}),
+    signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
   });
   const text = await res.text();
   let json;

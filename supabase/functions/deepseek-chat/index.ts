@@ -129,6 +129,7 @@ async function resolveCredential(): Promise<{ credential: DeepSeekCredential; or
 
 interface TurnRequest {
   jobId: string;
+  queue: string;
   prompt: string;
   sessionId: string | null;
   parentMessageId: string | null;
@@ -169,6 +170,7 @@ async function runTurn(turn: TurnRequest): Promise<Response> {
           },
           {
             jobId: turn.jobId,
+            queue: turn.queue,
             prompt: turn.prompt,
             sessionId: turn.sessionId,
             parentMessageId: turn.parentMessageId,
@@ -279,6 +281,7 @@ async function handle(req: Request): Promise<Response> {
   const modelType = (typeof body.model_type === 'string' ? body.model_type : 'default') as ModelType;
   return runTurn({
     jobId: typeof body.job_id === 'string' ? body.job_id : '',
+    queue: typeof body.queue === 'string' ? body.queue : 'default',
     prompt: typeof body.prompt === 'string' ? body.prompt : '',
     sessionId: typeof body.session_id === 'string' && body.session_id ? body.session_id : null,
     parentMessageId:

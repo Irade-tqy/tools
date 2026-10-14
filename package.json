@@ -38,7 +38,9 @@
     "relay:start": "node scripts/relay-service.mjs start",
     "relay:stop": "node scripts/relay-service.mjs stop",
     "relay:status": "node scripts/relay-service.mjs status",
-    "relay:logs": "node scripts/relay-service.mjs logs"
+    "relay:logs": "node scripts/relay-service.mjs logs",
+    "test:live": "node scripts/live-smoke.mjs",
+    "admin:secret": "node scripts/admin-secret.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.0.0",

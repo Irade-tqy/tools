@@ -24,6 +24,11 @@ export interface Config {
   anonKey: string;
   functionName: string;
   modelType: ModelType;
+  /**
+   * Which relay queue to use. 'default' is what the public site and the production relay
+   * share; the test suites point at 'test' so a live relay cannot claim their turns.
+   */
+  queue: string;
 }
 
 export const CONFIG_KEY = 'tools.config.v1';
@@ -76,6 +81,8 @@ export function parseHashConfig(hash: string): Partial<Config> {
   const anon = params.get('anon') || params.get('key');
   const fn = params.get('function') || params.get('fn');
   const model = params.get('model');
+  const queue = params.get('queue');
+  if (queue) out.queue = queue.trim().slice(0, 32);
   if (url) out.url = normalizeUrl(url);
   if (anon) out.anonKey = anon.trim();
   if (fn) out.functionName = fn.trim();
@@ -118,12 +125,13 @@ function merge(...parts: Array<Partial<Config> | undefined>): Config {
     anonKey: flat.anonKey ?? '',
     functionName: flat.functionName || DEFAULT_FUNCTION_NAME,
     modelType: isModelType(flat.modelType) ? flat.modelType : DEFAULT_MODEL_TYPE,
+    queue: flat.queue && /^[a-z0-9_-]{1,32}$/i.test(flat.queue) ? flat.queue : 'default',
   };
 }
 
 export function loadConfig(hash = ''): Config {
   return merge(
-    { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, functionName: DEFAULT_FUNCTION_NAME },
+    { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY, functionName: DEFAULT_FUNCTION_NAME, queue: 'default' },
     readStored(CONFIG_KEY),
     window.TOOLS_CONFIG,
     parseHashConfig(hash),

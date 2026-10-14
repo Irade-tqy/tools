@@ -7,7 +7,7 @@
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
-import { anonKey, clearDeepseekBacklog, env, supabaseUrl } from './lib.mjs';
+import { anonKey, clearDeepseekBacklog, env, rpc as rpcLib, serviceRoleKey, supabaseUrl } from './lib.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const PORT = Number(process.env.SMOKE_PORT || 4178);
@@ -80,7 +80,7 @@ async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageI
   const workerId = `smoke-${Math.random().toString(36).slice(2, 8)}`;
   const started = Date.now();
   for (let attempt = 0; attempt < 200; attempt += 1) {
-    const claim = await rpc('deepseek_claim', { p_worker_id: workerId });
+    const claim = await rpc('deepseek_claim', { p_worker_id: workerId, p_queue: 'test' });
     if (!claim.claimed) {
       await new Promise((r) => setTimeout(r, 150));
       continue;
@@ -205,6 +205,11 @@ try {
 
   browser = await launchChromium(chromium);
   const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
+  // Queue the smoke run's turns to 'test': the production relay serves 'default' and must
+  // not claim them (its DeepSeek token would reject the stub prompt).
+  await context.addInitScript(() => {
+    window.TOOLS_CONFIG = { ...(window.TOOLS_CONFIG || {}), queue: 'test' };
+  });
   const page = await context.newPage();
   const pageErrors = [];
   const httpErrors = [];
@@ -412,6 +417,47 @@ try {
     !(await page.evaluate(() => Boolean(document.querySelector('#view-chat #cred-input')))),
     health,
   );
+
+  // --- pasting one credential string, with the Edge Function absent -------------------
+  // The function is not deployed, so this exercises the PostgREST path: the page parses the
+  // string with the shared parser and stores it through deepseek_credential_set_admin().
+  const pasted = 'y'.repeat(64);
+  const credSnapshot = await rpcLib('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  await page.fill('#admin-token', env.TOOLS_ADMIN_TOKEN || '');
+  await page.fill('#cred-input', pasted);
+  await page.click('#cred-save');
+  await page
+    .waitForFunction(() => /已保存/.test(document.getElementById('cred-preview')?.textContent || ''), null, { timeout: 20_000 })
+    .catch(() => {});
+  const preview = (await page.textContent('#cred-preview')) || '';
+  const error = (await page.textContent('#cred-error')) || '';
+  check('pasting a credential string stores it without the Edge Function', /已保存/.test(preview), { preview, error });
+  check('the write is flagged as not checked upstream', /未经上游校验/.test(preview), preview);
+  const canonical = await page.inputValue('#cred-canonical');
+  check('the reusable string is handed back', canonical.startsWith('dscred1:'), canonical.slice(0, 40));
+  const stored = await rpcLib('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  check('the relay will use the pasted token', stored.body?.token === pasted, stored.body?.token?.slice(0, 8));
+  await page.click('#cred-status-refresh');
+  await page.waitForFunction(() => /已配置/.test(document.getElementById('cred-status')?.textContent || ''), null, { timeout: 10_000 }).catch(() => {});
+  check('the backend page reads credential status over PostgREST', /已配置/.test((await page.textContent('#cred-status')) || ''));
+
+  if (credSnapshot.body?.token) {
+    await rpcLib(
+      'deepseek_credential_set',
+      {
+        p_token: credSnapshot.body.token,
+        p_device_id: credSnapshot.body.device_id,
+        p_cookie: credSnapshot.body.cookie,
+        p_user_agent: credSnapshot.body.user_agent,
+        p_source: credSnapshot.body.source,
+        p_note: 'restored by browser-smoke',
+      },
+      { key: serviceRoleKey() },
+    );
+    const restored = await rpcLib('deepseek_credential_get', {}, { key: serviceRoleKey() });
+    check('the live credential is restored after the run', restored.body?.token === credSnapshot.body.token, restored.body?.token?.slice(0, 8));
+  }
+
   await page.goto(`${origin}index.html`, { waitUntil: 'load' });
   await page.waitForSelector('#clipboard-gate', { timeout: 10_000 });
 

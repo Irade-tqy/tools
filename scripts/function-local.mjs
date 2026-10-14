@@ -72,7 +72,9 @@ async function callJson(body) {
 }
 
 async function streamTurn(body) {
-  const { status, res } = await call(body);
+  // Serve the turn from the function under test, not from the production relay: the queue
+  // tag keeps the two apart while both are live against the same project.
+  const { status, res } = await call({ queue: 'test', ...body });
   if (status !== 200) return { status, text: await res.text(), events: [] };
   const text = await res.text();
   const events = text

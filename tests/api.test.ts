@@ -79,7 +79,7 @@ afterEach(() => {
 describe('rpc plumbing', () => {
   it('posts to the rpc endpoint with the anon key on both headers', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default' , queue: 'default' });
     await api.list();
     const req = requests[0]!;
     expect(req.url).toBe(`${URL}/rest/v1/rpc/clipboard_list`);
@@ -91,7 +91,7 @@ describe('rpc plumbing', () => {
 
   it('sends the clipboard token header once unlocked', async () => {
     stubFetch({ ok: true, entries: [] });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     api.setToken('tok-123');
     await api.list(20);
     expect(requests[0]!.headers['x-clipboard-token']).toBe('tok-123');
@@ -100,7 +100,7 @@ describe('rpc plumbing', () => {
 
   it('never leaks the clipboard token into verify', async () => {
     stubFetch({ ok: true, token: 't' });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' }, 'stale-token');
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' }, 'stale-token');
     await api.verify('pw', 60);
     expect(requests[0]!.headers['x-clipboard-token']).toBeUndefined();
     expect(requests[0]!.body).toEqual({ p_password: 'pw', p_ttl_seconds: 60 });
@@ -108,7 +108,7 @@ describe('rpc plumbing', () => {
 
   it('uploads files with kind, ciphertext, iv and salt', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' }, 'tok');
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' }, 'tok');
     await api.putFile({ fileName: 'a.txt', fileType: 'text/plain', data: 'ZGF0YQ==', iv: 'aXY=', salt: 'c2FsdA==' });
     expect(requests[0]!.body).toEqual({
       p_kind: 'file',
@@ -123,7 +123,7 @@ describe('rpc plumbing', () => {
 
   it('sends the session ids that place a turn in a conversation', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default' , queue: 'default' });
     await api.ask({ prompt: 'hi', sessionId: 'sess-1', parentId: '42', thinking: true });
     await api.ask({ prompt: 'new' });
     await api.jobStatus('job-1', 3);
@@ -135,6 +135,7 @@ describe('rpc plumbing', () => {
       p_model_type: 'default',
       p_thinking: true,
       p_search: false,
+      p_queue: 'default',
     });
     // A new conversation sends no ids at all.
     expect(requests[1]!.body).toMatchObject({ p_prompt: 'new', p_session_id: null, p_parent_message_id: null });
@@ -143,7 +144,7 @@ describe('rpc plumbing', () => {
 
   it('turns an HTTP error into an ApiError carrying the Postgres message', async () => {
     stubFetch({ code: '42883', message: 'operator does not exist' }, { ok: false, status: 400 });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     await expect(api.list()).rejects.toThrowError(ApiErrorCtor);
     try {
       await api.list();
@@ -158,7 +159,7 @@ describe('rpc plumbing', () => {
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new TypeError('Failed to fetch');
     }));
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     const error = await api.list().catch((err: ApiError) => err);
     expect(error).toBeInstanceOf(ApiErrorCtor);
     expect((error as ApiError).status).toBe(0);
@@ -167,7 +168,7 @@ describe('rpc plumbing', () => {
 
   it('survives a non-JSON body', async () => {
     stubFetch('<html>502 bad gateway</html>');
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     const body = await api.list();
     expect(body.ok).toBe(false);
     expect(body.error).toBe('bad_json');
@@ -175,15 +176,15 @@ describe('rpc plumbing', () => {
 
   it('treats an empty 204 body as a failure envelope', async () => {
     stubFetch('');
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     expect((await api.list()).error).toBe('empty_response');
   });
 
   it('rebuilds the realtime client when the project changes', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     api.subscribeJob('job-a', { onChunk: () => {} });
-    api.setConfig({ url: 'https://other.supabase.co', anonKey: 'other-key-0123456789', functionName: 'fn', modelType: 'default' });
+    api.setConfig({ url: 'https://other.supabase.co', anonKey: 'other-key-0123456789', functionName: 'fn', modelType: 'default', queue: 'default' });
     api.subscribeJob('job-b', { onChunk: () => {} });
     expect(mocks.channels.map((c) => c.name)).toEqual(['job-job-a', 'job-job-b']);
   });
@@ -192,7 +193,7 @@ describe('rpc plumbing', () => {
 describe('subscribeJob', () => {
   it('watches chunk inserts and job updates for one job only', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     const chunks: unknown[] = [];
     const jobs: unknown[] = [];
     api.subscribeJob('job-42', { onChunk: (row) => chunks.push(row), onJob: (row) => jobs.push(row) });
@@ -211,7 +212,7 @@ describe('subscribeJob', () => {
 
   it('removes the channel when disposed', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     const dispose = api.subscribeJob('job-1', { onChunk: () => {} });
     dispose();
     expect(mocks.removed).toHaveLength(1);
@@ -219,7 +220,7 @@ describe('subscribeJob', () => {
 
   it('reports realtime failures to the caller instead of throwing', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     let reported: unknown = null;
     api.subscribeJob('job-1', { onChunk: () => {}, onError: (err) => (reported = err) });
     const cb = mocks.channels[0]!.subscribed[0] as (status: string) => void;
@@ -231,7 +232,7 @@ describe('subscribeJob', () => {
 describe('callEdgeFunction', () => {
   it('posts the job id to the function endpoint', async () => {
     stubFetch({ ok: true });
-    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'fn', modelType: 'default' , queue: 'default' });
     await api.callEdgeFunction({ job_id: 'j1' });
     // the configured function name is what gets called
     expect(requests[0]!.url).toBe(`${URL}/functions/v1/fn`);

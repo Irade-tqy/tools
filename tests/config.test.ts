@@ -46,6 +46,13 @@ describe('parseHashConfig', () => {
     ).toEqual({ url: 'https://x.supabase.co', anonKey: 'abc123', modelType: 'expert', functionName: 'relay' });
   });
 
+  it('reads a relay queue override', () => {
+    expect(parseHashConfig('#queue=staging')).toEqual({ queue: 'staging' });
+    expect(loadConfig('#queue=staging').queue).toBe('staging');
+    // anything that is not a safe queue name falls back to the shared one
+    expect(loadConfig('#queue=%20oops!').queue).toBe('default');
+  });
+
   it('accepts the url/key aliases and a leading hash or none', () => {
     expect(parseHashConfig('url=https://y.supabase.co&key=zz')).toEqual({
       url: 'https://y.supabase.co',
@@ -101,6 +108,7 @@ describe('loadConfig precedence', () => {
       anonKey: DEFAULT_SUPABASE_ANON_KEY,
       functionName: 'deepseek-chat',
       modelType: 'default',
+      queue: 'default',
     });
   });
 
@@ -139,7 +147,7 @@ describe('isConfigured', () => {
   });
 
   it('requires a plausible url and a real-looking key', () => {
-    const base = { url: 'https://x.supabase.co', anonKey: 'x'.repeat(40), functionName: 'fn', modelType: 'default' as const };
+    const base = { url: 'https://x.supabase.co', anonKey: 'x'.repeat(40), functionName: 'fn', modelType: 'default' as const , queue: 'default' };
     expect(isConfigured(base)).toBe(true);
     expect(isConfigured({ ...base, url: 'nope' })).toBe(false);
     expect(isConfigured({ ...base, anonKey: 'short' })).toBe(false);
@@ -148,7 +156,7 @@ describe('isConfigured', () => {
 
 describe('persistence', () => {
   it('saves and clears config plus token together', () => {
-    saveConfig({ url: 'https://x.supabase.co', anonKey: 'k'.repeat(30), functionName: 'fn', modelType: 'expert' });
+    saveConfig({ url: 'https://x.supabase.co', anonKey: 'k'.repeat(30), functionName: 'fn', modelType: 'expert', queue: 'default' });
     saveToken({ token: 't', expiresAt: new Date(Date.now() + 60_000).toISOString() });
     saveAdminToken('admin-1');
     expect(store.has(CONFIG_KEY)).toBe(true);

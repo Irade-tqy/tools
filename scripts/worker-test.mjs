@@ -21,14 +21,23 @@ function check(name, cond, detail = '') {
   console.log(`${cond ? 'ok  ' : 'FAIL'}  ${name}${cond ? '' : `\n        ${String(note).slice(0, 300)}`}`);
 }
 
+const TEST_QUEUE = 'test';
 const key = anonKey();
-const call = (fn, payload = {}) => rpc(fn, payload, { key });
+// The local proxy drops a socket now and then; a test run must shrug that off rather than
+// die on an unhandled rejection.
+const call = async (fn, payload = {}) => {
+  try {
+    return await rpc(fn, payload, { key, timeoutMs: 20_000 });
+  } catch (err) {
+    return { status: 0, ok: false, body: { ok: false, error: `transport: ${(err && err.message) || 'fetch failed'}` } };
+  }
+};
 
 // A dead relay's leftover rows count against deepseek_ask's backlog limit, so start clean.
 const backlog = await clearDeepseekBacklog({ workerId: 'worker-test' });
 if (backlog.closed || backlog.drained) console.log(`cleared backlog: ${backlog.closed} stale, ${backlog.drained} queued`);
 
-const worker = spawn(process.execPath, ['scripts/deepseek-worker.mjs', '--worker-id', `test-${Date.now().toString(36)}`, '--idle-ms', '300'], {
+const worker = spawn(process.execPath, ['scripts/deepseek-worker.mjs', '--worker-id', `test-${Date.now().toString(36)}`, '--queue', TEST_QUEUE, '--idle-ms', '300'], {
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 const workerLog = [];
@@ -42,14 +51,19 @@ worker.stderr.on('data', capture);
 
 /** Queue one turn and wait for the worker to finish it, collecting the streamed chunks. */
 async function turn(input) {
-  const enqueued = await call('deepseek_ask', {
-    p_prompt: input.prompt,
-    p_session_id: input.sessionId ?? null,
-    p_parent_message_id: input.parentId ? Number(input.parentId) : null,
-    p_model_type: input.modelType ?? 'default',
-    p_thinking: Boolean(input.thinking),
-    p_search: Boolean(input.search),
-  });
+  let enqueued = {};
+  for (let attempt = 0; attempt < 3 && !enqueued.body?.ok; attempt += 1) {
+    enqueued = await call('deepseek_ask', {
+      p_prompt: input.prompt,
+      p_session_id: input.sessionId ?? null,
+      p_parent_message_id: input.parentId ? Number(input.parentId) : null,
+      p_model_type: input.modelType ?? 'default',
+      p_thinking: Boolean(input.thinking),
+      p_search: Boolean(input.search),
+      p_queue: TEST_QUEUE,
+    });
+    if (!enqueued.body?.ok) await sleep(1500);
+  }
   if (!enqueued.body?.ok) return { ok: false, error: enqueued.body?.error, jobId: null, text: '', tools: [], status: {} };
 
   const jobId = enqueued.body.job_id;

@@ -239,7 +239,7 @@ export function initChat(api: ToolsApi): ChatView {
     if (!api.config.url) return;
     abortController = new AbortController();
     try {
-      const res = await api.callEdgeFunction({ job_id: jobId }, abortController.signal);
+      const res = await api.callEdgeFunction({ job_id: jobId, queue: api.config.queue }, abortController.signal);
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         // 503 means the server has no usable DeepSeek credential; the DB path still renders.

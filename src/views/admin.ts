@@ -7,7 +7,7 @@
 //
 // Everything else here (Supabase overrides, queue counters) is diagnostics for self-hosting.
 
-import type { CredentialStatus, ToolsApi } from '../lib/api';
+import type { CredentialSetResult, CredentialStatus, ToolsApi } from '../lib/api';
 import {
   clearConfig,
   isConfigured,
@@ -19,7 +19,7 @@ import {
   type Config,
 } from '../lib/config';
 import { $, copyText, on, showError, toast } from '../lib/dom';
-import { fingerprint, parseCredential } from '../../supabase/functions/_shared/credential.ts';
+import { fingerprint, parseCredential, serializeCredential } from '../../supabase/functions/_shared/credential.ts';
 
 export interface AdminView {
   render(): void;
@@ -72,20 +72,10 @@ export function initAdmin(api: ToolsApi, cfg: Config, onChange: (next: Config) =
   }
 
   async function refreshStatus() {
-    const token = adminTokenInput.value.trim();
-    if (!token) {
-      credStatus.textContent = '未填管理令牌：只显示公开状态。';
-      const health = await api.health().catch(() => null);
-      if (health?.ok) {
-        credStatus.textContent =
-          health.credential_configured === false
-            ? '服务端还没有 DeepSeek 登录态。'
-            : `服务端已配置（${health.credential_age_minutes ?? '?'} 分钟前更新）${health.credential_error ? ` · ${health.credential_error}` : ''}`;
-      }
-      return;
-    }
+    // deepseek_credential_status() is a public RPC that returns no secret, so the backend
+    // page reads its status from PostgREST directly — no admin token, no Edge Function.
     const status: CredentialStatus = await api
-      .credentialStatus(token)
+      .credentialStatusRpc()
       .catch((err) => ({ ok: false, error: (err as Error).message }));
     if (!status.ok) {
       credStatus.textContent = `读取失败：${status.error ?? '未知错误'}`;
@@ -112,14 +102,31 @@ export function initAdmin(api: ToolsApi, cfg: Config, onChange: (next: Config) =
     button.disabled = true;
     button.textContent = '验证中…';
     try {
-      const result = await api.credentialSet(raw, token, verifyBox.checked);
+      // Prefer the Edge Function: it checks the string against DeepSeek before storing it.
+      // With the function undeployed the call 404s, and the same write goes through
+      // PostgREST instead — gated by the admin token, marked unverified.
+      let result: CredentialSetResult = { ok: false, error: 'unreachable' };
+      let viaRest = false;
+      try {
+        result = await api.credentialSet(raw, token, verifyBox.checked);
+        if (!result.ok && /HTTP 404|not[_ ]found|no such service|function.*not/i.test(result.error ?? '')) {
+          viaRest = true;
+        }
+      } catch {
+        viaRest = true;
+      }
+      if (viaRest) {
+        result = await api.credentialSetViaRpc(parsed.credential, token);
+        if (result.ok) result.canonical = serializeCredential(parsed.credential);
+      }
       if (!result.ok) {
         showError(credErrorNode, result.error ?? '保存失败');
         return;
       }
       canonicalBox.value = result.canonical ?? '';
       credPreview.textContent =
-        `已保存：${result.source} · ${result.fingerprint}` +
+        `已保存：${result.source} · ${result.fingerprint ?? result.token_hint ?? ''}` +
+        (result.verified === false ? ' · 未经上游校验，下一轮请求会报告结果' : '') +
         (result.warnings?.length ? ` · ${result.warnings.join('；')}` : '');
       toast('DeepSeek 登录态已更新', 'ok');
       await refreshStatus();
@@ -145,14 +152,24 @@ export function initAdmin(api: ToolsApi, cfg: Config, onChange: (next: Config) =
       kv.append(dt, dd);
       return;
     }
+    // Liveness comes from the heartbeat table (deepseek_health), not from "did somebody
+    // claim a job lately" — an idle relay is online, and that has to be visible here.
+    const relays = Array.isArray(health.workers) ? health.workers : [];
+    const relayText = relays.length
+      ? `${health.workers_alive ?? relays.length} 个在线 · ${relays
+          .map((w) => `${w.worker_id}（${w.turns} 轮，${w.age_seconds}s 前心跳）`)
+          .join('、')}`
+      : '没有通道在领取任务，消息会排队';
     const rows: Array<[string, string]> = [
-      ['转发通道', health.transport ?? '—'],
+      ['转发通道', relayText],
+      ['正在领取', String(health.workers_claiming ?? 0)],
       ['队列中', String(health.queued ?? 0)],
       ['近 1 小时成功', String(health.done_last_hour ?? 0)],
       ['近 1 小时失败', String(health.error_last_hour ?? 0)],
       ['中位首字', health.median_ttft_ms ? `${health.median_ttft_ms}ms` : '—'],
       ['登录态', health.credential_configured ? `已配置（${health.credential_age_minutes ?? '?'} 分钟前）` : '未配置'],
-      ['管理令牌', health.admin_enabled ? '已启用' : '未启用'],
+      // admin_enabled is only reported by the Edge Function's own health action
+      ['后台写操作', health.admin_enabled === true ? '已启用' : health.admin_enabled === false ? '未启用' : 'Edge Function 未部署'],
     ];
     kv.replaceChildren(
       ...rows.flatMap(([key, value]) => {
@@ -173,6 +190,8 @@ export function initAdmin(api: ToolsApi, cfg: Config, onChange: (next: Config) =
       anonKey: anonInput.value.trim(),
       functionName: fnInput.value.trim() || 'deepseek-chat',
       modelType: isModelType(modelSelect.value) ? modelSelect.value : 'default',
+      // the queue is not a per-deployment knob in the form; #queue= covers staging relays
+      queue: api.config.queue || 'default',
     };
     if (!isValidUrl(next.url)) {
       showError(errorNode, 'Supabase URL 需形如 https://<ref>.supabase.co');

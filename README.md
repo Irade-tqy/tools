@@ -12,11 +12,11 @@
 
 | 部分 | 状态 |
 | --- | --- |
-| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳） | 已应用到线上项目，**86 项**端到端检查通过（`npm run test:db`） |
-| 单元测试 | **155 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
+| 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**97 项**端到端检查通过（`npm run test:db`） |
+| 单元测试 | **156 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
-| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **37 项**检查通过（`npm run test:browser`） |
+| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **43 项**检查通过（`npm run test:browser`），另有 **14 项**直接打线上站点（`npm run test:live`） |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
@@ -66,6 +66,10 @@ npm run relay:stop       # 停（前端会明确说「没有通道在领取任�
 
 **心跳（0004）**：`deepseek_worker` 表一行一个通道，`deepseek_claim` 本身就是心跳 —— 空队列时也刷新 `seen_at`。`deepseek_health()` 的 `workers_alive` 数的是「30 秒内有心跳的通道」，不是「30 秒内领过活」，所以「空闲」和「没人服务」从此分得开；`workers` 数组（id / kind / turns / 距上次心跳秒数）只在隐藏后台展示。这张表 anon 读不到（revoke 掉了），浏览器只能通过 RPC 看。
 
+### 队列（queue）
+
+`deepseek_job.queue` 把「谁领这条任务」分开：线上转发只吃 `default`，测试套件（`test:db` / `test:worker` / `test:browser`）都往 `test` 排队并只领 `test`。没有这个隔离，线上转发会抢走测试排的任务，拿一次性令牌去打上游然后判失败；有了它，测试和线上转发可以同时跑在同一个 project 上。前端默认 `default`，`#queue=staging` 可以临时切到别的通道；`deepseek_health()` 只统计 `default`，测试队列的积压不会让线上状态条变红。
+
 **落库顺序是硬约束**：`deepseek_chunk` 必须全部写完才能 `deepseek_complete()`。complete 一旦先落地，服务端就把后续 append 判成 `job_done` 丢掉，`done` 帧（会话 id、标题、计时）就永远进不了库 —— 只轮询的客户端于是无法继续同一会话。实测踩过：130 个 chunk 只落了 124 个。现在 `ChunkSink.flush()` 会等齐所有在途写入，单次 append 失败退避重试、只丢那一块（`metrics.chunks_written` / `chunk_stop_reason` 会把它暴露出来），`tests/relay.test.ts` 把这几种情形都钉住了。
 
 ### 一个字符串换到所有需要的数据
@@ -80,6 +84,16 @@ npm run relay:stop       # 停（前端会明确说「没有通道在领取任�
 | key: value | `token: …` / `authorization: Bearer …` / `x-device-id: …` 任意几行 |
 | 裸 token | `localStorage.userToken` 的值 |
 | 裸 Cookie | `smidV2=…; tfstk=…`（只有 Cookie 时会明确报错：登录态在 userToken 里） |
+
+线上有两条写入路径，都不需要重新部署：
+
+| 路径 | 前置 | 是否向上游校验 |
+| --- | --- | --- |
+| 隐藏后台页粘贴（Edge Function 已部署时） | `TOOLS_ADMIN_TOKEN` secret | ✅ 先打 `create_pow_challenge` 再存 |
+| 隐藏后台页粘贴（Edge Function 未部署时） | `npm run admin:secret` 写入的令牌哈希 | �❌ 标记为未校验，下一轮请求的结果会回到状态条 |
+| `npm run deepseek:credential` | service role key | ✅ |
+
+后台页存的就是 PostgREST 的 `deepseek_credential_set_admin()`：浏览器用同一份解析代码把字符串拆成 `{token, deviceId, cookie, userAgent}`，令牌只在 RPC 里和 sha256 摘要比对（库里不存明文令牌），猜错 20 次锁 5 分钟。
 
 ```bash
 # 解析 → 向上游验证 → 写 .env.local → 存进数据库（下一次请求就生效，不用重新部署）
@@ -115,6 +129,7 @@ cp .env.example .env.local && chmod 600 .env.local   # 填 Supabase / 密码 / t
 npm install
 npm run db:push                                       # 应用 supabase/migrations/*.sql
 npm run allowlist 'shared:你的密码'                    # 写入允许列表（bcrypt 在库内计算）
+npm run admin:secret                                # 后台页粘贴字符串用的令牌哈希
 npm run deepseek:credential -- '<登录字符串>'          # 配 DeepSeek 登录态
 npm run dev                                           # http://127.0.0.1:5173
 ```
@@ -122,12 +137,13 @@ npm run dev                                           # http://127.0.0.1:5173
 ## 测试
 
 ```bash
-npm test              # 155 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
-npm run test:db       # 86 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
+npm test              # 156 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
+npm run test:db       # 97 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
-npm run test:browser  # 37 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记、后台隐藏
-npm run test:all      # 全部跑一遍
+npm run test:browser  # 43 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记、后台隐藏、粘贴登录态
+npm run test:live     # 14 项打线上站点：不塞任何桩，真转发 + 真 DeepSeek + 续聊 / 新会话 / 工具标记
+npm run test:all      # 全部跑一遍（test:live 单独跑，它打的是线上站点）
 npm run check:generated   # 内置默认值与内联 wasm 是否和 .env.local / vendor 一致
 
 # 冒烟测试也能直接打线上站点：
@@ -160,6 +176,8 @@ supabase/migrations/     0001 剪贴板（允许列表 / 令牌 / RLS / 限流 /
                          0002 DeepSeek 队列（job / chunk / Realtime / 指标）
                          0003 登录态入库 + 会话字段 + 会话化 RPC
                          0004 转发心跳（deepseek_worker / deepseek_heartbeat / workers_alive）
+                         0005 后台粘贴登录字符串走 PostgREST（tools_secret 摘要 + 猜错限流）
+                         0006 命名队列（default = 线上，test = 测试）
 supabase/functions/      deepseek-chat（Edge Function 入口：SSE + 凭据动作）
                          _shared/relay.ts         一轮转发的全部流程（Edge 与 node 共用）
                          _shared/credential.ts    一个字符串 → 需要的数据（浏览器/脚本/函数共用）
@@ -170,6 +188,7 @@ src/lib/                 config · api · crypto · sse · chat-reducer · sessi
 src/views/               clipboard · chat · admin（后台，?admin=1 才显示）
 scripts/                 db-push · db-test · worker-test · allowlist · function-local · browser-smoke ·
                          browser-relay · relay-service（systemd 常驻转发）· deepseek-worker（常驻转发）·
+                         admin-secret（管理令牌哈希）· live-smoke（打线上站点的端到端）·
                          deepseek-credential（登录字符串入口）· deepseek-pow-node（命令行跑上游）·
                          pow-vendor · defaults-sync · secrets-sync · functions-deploy · pages-*
 tests/                   vitest 单元测试 + tests/fixtures/stream-*.txt（录制的真实上游流）

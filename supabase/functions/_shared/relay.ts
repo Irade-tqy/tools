@@ -43,6 +43,8 @@ export interface RelayDeps {
 export interface RelayTurn {
   /** '' → enqueue the turn first (the browser path queues before it calls us) */
   jobId: string;
+  /** which relay serves an enqueued turn; null/'' → the server's 'default' queue */
+  queue?: string | null;
   prompt: string;
   sessionId?: string | null;
   parentMessageId?: string | null;
@@ -244,6 +246,7 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
       p_model_type: turn.modelType ?? 'default',
       p_thinking: Boolean(turn.thinking),
       p_search: Boolean(turn.search),
+      p_queue: turn.queue ?? null,
     });
     if (!enqueued.ok) {
       return {
@@ -262,7 +265,7 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
     jobId = String(enqueued.job_id ?? '');
   }
 
-  const claim = await rpc('deepseek_claim', { p_worker_id: workerId, p_job_id: jobId });
+  const claim = await rpc('deepseek_claim', { p_worker_id: workerId, p_job_id: jobId, p_queue: turn.queue ?? null });
   if (!claim.claimed) {
     return {
       jobId,

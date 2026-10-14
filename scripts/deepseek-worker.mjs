@@ -41,6 +41,7 @@ const parseDuration = (raw, fallback) => {
 const IDLE_MS = parseDuration(flagValue('--idle-ms', ''), 1000);
 const IDLE_EXIT_MS = parseDuration(flagValue('--idle-exit', ''), 0);
 const ONCE = has('--once');
+const QUEUE = flagValue('--queue', env.TOOLS_RELAY_QUEUE || 'default').slice(0, 32);
 const QUIET = has('--quiet');
 const WORKER_ID = (flagValue('--worker-id', '') || process.env.TOOLS_WORKER_ID || `node-${process.pid}-${Date.now().toString(36).slice(-4)}`)
   .slice(0, 64);
@@ -59,8 +60,18 @@ try {
 
 // relay.ts expects the RPC *body*, while lib.mjs returns the HTTP envelope — unwrap here so
 // the shared protocol sees {ok, claimed, job_id, …} exactly as it does on Supabase.
+// A stalled connection must not become a stalled relay: every call is bounded, and the
+// watchdog below exits the process so the supervisor starts a clean one.
+const RPC_TIMEOUT_MS = parseDuration(flagValue('--rpc-timeout', ''), 20_000);
+const WATCHDOG_MS = parseDuration(flagValue('--watchdog', ''), 90_000);
+
 const call = async (fn, payload = {}) => {
-  const res = await rpc(fn, payload, { key });
+  let res;
+  try {
+    res = await rpc(fn, payload, { key, timeoutMs: RPC_TIMEOUT_MS });
+  } catch (err) {
+    return { ok: false, error: `transport_${fn}: ${(err && err.message) || 'request failed'}` };
+  }
   return (res.body ?? { ok: false, error: `empty_response_${fn}`, http: res.status });
 };
 
@@ -108,11 +119,13 @@ async function resolveCredential() {
 
 let turns = 0;
 let failures = 0;
+let lastBeatAt = Date.now();
 let lastWorkAt = Date.now();
 let lastCredentialError = '';
 
 async function serveOneTurn() {
-  const claim = await call('deepseek_claim', { p_worker_id: WORKER_ID });
+  const claim = await call('deepseek_claim', { p_worker_id: WORKER_ID, p_queue: QUEUE });
+  lastBeatAt = Date.now();
   if (!claim.claimed) return { worked: false, reason: claim.reason || claim.error || 'empty' };
 
   const resolved = await resolveCredential();
@@ -130,7 +143,7 @@ async function serveOneTurn() {
       transport: TRANSPORT_WORKER,
       shouldAbort: () => stopping,
     },
-    { jobId: String(claim.job_id), prompt: String(claim.prompt || '') },
+    { jobId: String(claim.job_id), queue: QUEUE, prompt: String(claim.prompt || '') },
   );
 
   const ms = result.metrics?.upstream_total_ms ?? 0;
@@ -147,7 +160,18 @@ async function serveOneTurn() {
   return { worked: true, jobId: result.jobId, ok: result.ok, error: result.error };
 }
 
-log(`worker ${WORKER_ID} → ${supabaseUrl} (idle ${IDLE_MS}ms${ONCE ? ', once' : ''}${IDLE_EXIT_MS ? `, idle-exit ${IDLE_EXIT_MS}ms` : ''})`);
+// A relay that cannot reach the database is useless but still "running", so make the stall
+// fatal and let the supervisor restart it.
+const watchdog = setInterval(() => {
+  const silent = Date.now() - lastBeatAt;
+  if (silent > WATCHDOG_MS) {
+    log(`no successful call for ${Math.round(silent / 1000)}s — exiting so the supervisor restarts`);
+    process.exit(1);
+  }
+}, Math.max(5_000, Math.floor(WATCHDOG_MS / 3)));
+watchdog.unref?.();
+
+log(`worker ${WORKER_ID} → ${supabaseUrl} (queue ${QUEUE}, idle ${IDLE_MS}ms${ONCE ? ', once' : ''}${IDLE_EXIT_MS ? `, idle-exit ${IDLE_EXIT_MS}ms` : ''})`);
 
 let credentialWarned = false;
 while (!stopping) {
@@ -164,6 +188,7 @@ while (!stopping) {
 
   if (outcome.worked) {
     turns += 1;
+    lastBeatAt = Date.now();
     lastWorkAt = Date.now();
     failures = 0;
     credentialWarned = false;

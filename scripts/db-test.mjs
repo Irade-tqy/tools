@@ -30,6 +30,7 @@ function openWith(password, sealed) {
   return Buffer.concat([decipher.update(raw.subarray(0, raw.length - 16)), decipher.final()]).toString('utf8');
 }
 
+const TEST_QUEUE = 'test';
 const results = [];
 let token = '';
 let token2 = '';
@@ -273,6 +274,45 @@ async function main() {
   r = await rpc('deepseek_credential_status', {});
   check('a success clears the error and stamps last_ok_at', !r.body?.last_error && !!r.body?.last_ok_at, r.body);
 
+  // --- pasting a credential string without the Edge Function (0005) ---
+  const adminToken = (env.TOOLS_ADMIN_TOKEN || '').trim();
+  const { createHash } = await import('node:crypto');
+  await rpc(
+    'tools_secret_set',
+    { p_name: 'admin_token', p_digest: createHash('sha256').update(adminToken, 'utf8').digest('hex'), p_hint: 'db-test' },
+    { key: serviceRoleKey() },
+  );
+  const pastedToken = 'p'.repeat(64);
+  r = await rpc('deepseek_credential_set_admin', { p_token: pastedToken, p_admin_token: 'wrong-token' });
+  check('a wrong admin token is refused over PostgREST', r.body?.ok === false && r.body?.error === 'bad_admin_token', r.body);
+  const attempts = await db.query("select failed from public.tools_auth_attempt where bucket = app.tools_attempt_bucket(5)");
+  check('a wrong token is counted against the guess-rate guard', Number(attempts.rows[0]?.failed) >= 1, attempts.rows[0]);
+
+  r = await rpc('deepseek_credential_set_admin', {
+    p_token: pastedToken,
+    p_admin_token: adminToken,
+    p_device_id: 'dev-rest',
+    p_source: 'browser',
+  });
+  check('the right admin token stores the credential over PostgREST', r.body?.ok === true && r.body?.verified === false, r.body);
+  check('the write is marked unverified', /not checked against the upstream/.test(String(r.body?.note ?? '')), r.body?.note);
+  check('the response carries a hint, not the secret', r.body?.token_hint === `${pastedToken.slice(0, 4)}…${pastedToken.slice(-4)}` && !JSON.stringify(r.body).includes(pastedToken), r.body);
+
+  r = await rpc('deepseek_credential_get', {}, { key: serviceRoleKey() });
+  check('the relay will pick up the pasted credential', r.body?.token === pastedToken && r.body?.device_id === 'dev-rest', r.body?.token);
+  r = await rpc('deepseek_credential_status', {});
+  check('an unverified write does not look like a working login', r.body?.source === 'browser' && !r.body?.last_ok_at, r.body);
+
+  r = await rpc('deepseek_credential_set_admin', { p_token: 'short', p_admin_token: adminToken });
+  check('the PostgREST path validates the token shape', r.body?.ok === false && r.body?.error === 'bad_token', r.body);
+  r = await rpc('deepseek_credential_set_admin', { p_token: pastedToken, p_admin_token: adminToken, p_source: 'everything' });
+  check('the PostgREST path validates the source', r.body?.ok === false && r.body?.error === 'bad_source', r.body);
+
+  const secretTable = await rest('tools_secret?select=*');
+  check('the browser cannot read the secret table', secretTable.status === 401 || secretTable.status === 403 || secretTable.text.trim() === '[]', `HTTP ${secretTable.status}`);
+  const secretRpc = await rpc('tools_secret_set', { p_name: 'admin_token', p_digest: '0'.repeat(64) });
+  check('anon cannot write a secret', secretRpc.status === 401 || secretRpc.status === 403, `${secretRpc.status} ${secretRpc.body}`);
+
   if (snapshot.body?.ok && snapshot.body.token) {
     await rpc(
       'deepseek_credential_set',
@@ -293,39 +333,39 @@ async function main() {
   }
 
   // ---- deepseek relay -------------------------------------------------------
-  r = await rpc('deepseek_ask', { p_prompt: 'ping' });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'ping' });
   const jobId = r.body?.job_id;
   check('ask queues a turn', r.body?.ok === true && !!jobId, r.body);
 
-  r = await rpc('deepseek_ask', { p_prompt: '   ' });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: '   ' });
   check('an empty prompt is refused', r.body?.ok === false && r.body?.error === 'empty_prompt', r.body);
 
-  r = await rpc('deepseek_ask', { p_prompt: 'x', p_model_type: 'gpt-4' });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'x', p_model_type: 'gpt-4' });
   check('an unknown model type is refused', r.body?.ok === false && r.body?.error === 'bad_model_type', r.body);
 
-  r = await rpc('deepseek_ask', { p_prompt: 'x'.repeat(40000) });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'x'.repeat(40000) });
   check('an oversized prompt is refused', r.body?.ok === false && r.body?.error === 'prompt_too_long', r.body);
 
-  r = await rpc('deepseek_claim', { p_worker_id: 'test-worker' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'test-worker' });
   check('worker claims the queued job', r.body?.ok === true && r.body?.claimed === true && r.body?.job_id === jobId, r.body);
   check('claim hands over the prompt', r.body?.prompt === 'ping', r.body?.prompt);
 
-  r = await rpc('deepseek_claim', { p_worker_id: 'test-worker-2' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'test-worker-2' });
   check('an empty queue reports claimed=false', r.body?.ok === true && r.body?.claimed === false, r.body);
 
-  r = await rpc('deepseek_claim', { p_worker_id: '' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: '' });
   check('claim requires a worker id', r.body?.ok === false && r.body?.error === 'missing_worker_id', r.body);
 
   // targeted claims: the edge function processes the job the UI just enqueued
-  const jobA = await rpc('deepseek_ask', { p_prompt: 'A' });
-  const jobB = await rpc('deepseek_ask', { p_prompt: 'B' });
-  r = await rpc('deepseek_claim', { p_worker_id: 'targeted', p_job_id: jobB.body?.job_id });
+  const jobA = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'A' });
+  const jobB = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'B' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'targeted', p_job_id: jobB.body?.job_id });
   check('claim can target a specific job', r.body?.claimed === true && r.body?.job_id === jobB.body?.job_id, r.body);
-  r = await rpc('deepseek_claim', { p_worker_id: 'targeted', p_job_id: jobA.body?.job_id });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'targeted', p_job_id: jobA.body?.job_id });
   check('a still-queued job can be claimed next', r.body?.claimed === true && r.body?.job_id === jobA.body?.job_id, r.body);
-  r = await rpc('deepseek_claim', { p_worker_id: 'targeted', p_job_id: jobB.body?.job_id });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'targeted', p_job_id: jobB.body?.job_id });
   check('the holder can re-attach to its own job', r.body?.claimed === true && r.body?.job_id === jobB.body?.job_id, r.body);
-  r = await rpc('deepseek_claim', { p_worker_id: 'other-worker', p_job_id: jobB.body?.job_id });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'other-worker', p_job_id: jobB.body?.job_id });
   check('another worker cannot steal a claimed job', r.body?.claimed === false && r.body?.reason === 'not_available', r.body);
   await rpc('deepseek_cancel', { p_job_id: jobA.body?.job_id });
   await rpc('deepseek_complete', { p_job_id: jobB.body?.job_id, p_ok: true });
@@ -367,18 +407,18 @@ async function main() {
   check('appending to a done job is refused', r.body?.ok === false && r.body?.error === 'job_done', r.body);
 
   // a turn queued against an existing conversation keeps its ids
-  r = await rpc('deepseek_ask', { p_prompt: 'continue', p_session_id: 'sess-abc', p_parent_message_id: 42, p_thinking: true, p_search: true });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'continue', p_session_id: 'sess-abc', p_parent_message_id: 42, p_thinking: true, p_search: true });
   const sessionJobId = r.body?.job_id;
-  r = await rpc('deepseek_claim', { p_worker_id: 'session-worker', p_job_id: sessionJobId });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'session-worker', p_job_id: sessionJobId });
   check('claim returns the session ids so the relay can continue', r.body?.session_id === 'sess-abc' && r.body?.parent_message_id === '42', r.body);
   check('claim returns the thinking/search flags', r.body?.thinking_enabled === true && r.body?.search_enabled === true, r.body);
   await rpc('deepseek_cancel', { p_job_id: sessionJobId });
 
-  r = await rpc('deepseek_ask', { p_prompt: 'cancel me' });
+  r = await rpc('deepseek_ask', { p_queue: TEST_QUEUE, p_prompt: 'cancel me' });
   const cancelId = r.body?.job_id;
   r = await rpc('deepseek_cancel', { p_job_id: cancelId });
   check('cancel stops a queued job', r.body?.ok === true && r.body?.status === 'cancelled', r.body);
-  r = await rpc('deepseek_claim', { p_worker_id: 'test-worker-3' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'test-worker-3' });
   check('a cancelled job is never claimed', r.body?.ok === true && r.body?.claimed === false, r.body);
 
   r = await rpc('deepseek_health', {});
@@ -397,7 +437,7 @@ async function main() {
   // An idle relay claims nothing, so the claim itself has to keep it counted.
   const idleId = `test-idle-${Date.now().toString(36)}`;
   await clearDeepseekBacklog({ workerId: 'db-test-idle' });
-  r = await rpc('deepseek_claim', { p_worker_id: idleId });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: idleId });
   check('an idle claim finds no work', r.body?.ok === true && r.body?.claimed === false, r.body);
   r = await rpc('deepseek_health', {});
   check('an idle relay still counts as alive', r.body?.workers?.some((w) => w.worker_id === idleId) === true && Number(r.body?.workers_alive) >= 1, r.body);
@@ -418,7 +458,7 @@ async function main() {
 
   // worker timeout requeue
   await db.query('update public.deepseek_job set status=$1, claimed_at = now() - interval \'10 minutes\' where id = $2', ['claimed', cancelId]);
-  r = await rpc('deepseek_claim', { p_worker_id: 'test-worker-4' });
+  r = await rpc('deepseek_claim', { p_queue: TEST_QUEUE, p_worker_id: 'test-worker-4' });
   check('a stuck job is requeued and reclaimed', r.body?.claimed === true && r.body?.job_id === cancelId, r.body);
   await rpc('deepseek_cancel', { p_job_id: cancelId });
 }

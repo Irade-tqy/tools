@@ -2,6 +2,7 @@
 // dependency-free for data calls (fetch only); supabase-js is used solely for Realtime.
 
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
+import type { DeepSeekCredential } from '../../supabase/functions/_shared/credential.ts';
 import type { Config, ModelType } from './config';
 
 export type Envelope = Record<string, unknown> & { ok: boolean; error?: string | null };
@@ -84,10 +85,20 @@ export interface JobStatus extends Envelope {
   chunks?: { seq: number; payload: Record<string, unknown>; created_at: string }[];
 }
 
+export interface RelayInfo {
+  worker_id: string;
+  kind: string;
+  turns: number;
+  seen_at: string;
+  age_seconds: number;
+}
+
 export interface Health extends Envelope {
   pending?: number;
   queued?: number;
   workers_alive?: number;
+  workers_claiming?: number;
+  workers?: RelayInfo[];
   done_last_hour?: number;
   error_last_hour?: number;
   median_ttft_ms?: number | null;
@@ -114,6 +125,10 @@ export interface CredentialStatus extends Envelope {
 export interface CredentialSetResult extends Envelope {
   source?: string;
   fingerprint?: string;
+  /** false when the string was stored without a live check against DeepSeek */
+  verified?: boolean;
+  token_hint?: string;
+  note?: string;
   has_device_id?: boolean;
   has_cookie?: boolean;
   warnings?: string[];
@@ -236,6 +251,7 @@ export class ToolsApi {
       p_model_type: input.modelType ?? this.cfg.modelType,
       p_thinking: Boolean(input.thinking),
       p_search: Boolean(input.search),
+      p_queue: this.cfg.queue || null,
     });
   }
   jobStatus(jobId: string, sinceSeq = -1) {
@@ -269,6 +285,30 @@ export class ToolsApi {
     const body = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as CredentialSetResult;
     if (!res.ok && body.ok !== false) return { ok: false, error: `HTTP ${res.status}` };
     return body;
+  }
+
+  /**
+   * Coarse credential status over PostgREST: `deepseek_credential_status()` is public and
+   * returns no secret, so the backend page works with the Edge Function undeployed.
+   */
+  async credentialStatusRpc(): Promise<CredentialStatus> {
+    return this.rpc<CredentialStatus>('deepseek_credential_status');
+  }
+
+  /**
+   * Store a credential the browser already parsed. Gated by TOOLS_ADMIN_TOKEN inside the RPC
+   * (the DB only holds its sha256), so pasting a string needs no Edge Function — the only
+   * thing lost is the live check against DeepSeek, which the next turn reports anyway.
+   */
+  async credentialSetViaRpc(credential: DeepSeekCredential, adminToken: string): Promise<CredentialSetResult> {
+    return this.rpc<CredentialSetResult>('deepseek_credential_set_admin', {
+      p_token: credential.token,
+      p_admin_token: adminToken,
+      p_device_id: credential.deviceId || null,
+      p_cookie: credential.cookie || null,
+      p_user_agent: credential.userAgent || null,
+      p_source: credential.source,
+    });
   }
 
   async credentialStatus(adminToken: string): Promise<CredentialStatus> {
