@@ -439,7 +439,23 @@ async function main() {
   r = await rpc('deepseek_health', {});
   check('health snapshot works', r.body?.ok === true && typeof r.body?.done_last_hour === 'number', r.body);
   check('health reports credential state for the status strip', r.body?.credential_configured === true && 'credential_age_minutes' in r.body, r.body);
-  check('health reports the median upstream first-token time', typeof r.body?.median_ttft_ms === 'number' && r.body.median_ttft_ms > 0, r.body);
+  // median_ttft_ms counts only the 'default' queue (0006: the public site must not be told it is
+  // ready because a test relay answered), so this assertion cannot depend on somebody having
+  // used the site in the last hour — it failed at 03:00 when nobody had. Seed a finished turn
+  // and take it back out.
+  const seeded = await db.query(
+    `insert into public.deepseek_job (status, metrics, finished_at)
+     values ('done', jsonb_build_object('upstream_ttft_ms', 1234), now())
+     returning id`,
+  );
+  const seedId = seeded.rows[0]?.id;
+  r = await rpc('deepseek_health', {});
+  check(
+    'health reports the median upstream first-token time',
+    typeof r.body?.median_ttft_ms === 'number' && r.body.median_ttft_ms > 0,
+    r.body?.median_ttft_ms,
+  );
+  await db.query('delete from public.deepseek_job where id = $1', [seedId]);
 
   // --- relay liveness (0004): the status strip must tell "nobody is serving" from "idle" ---
   const relayId = `test-relay-${Date.now().toString(36)}`;
