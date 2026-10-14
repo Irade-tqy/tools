@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tools · 云剪贴板 / DeepSeek</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f6feb'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+    <script type="module" crossorigin src="./assets/index-CgoPo0xI.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BnFm4Kwc.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="brand">Tools</span>
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" role="tab" data-view="clipboard" aria-selected="true">云剪贴板</button>
+        <button class="tab" role="tab" data-view="chat" aria-selected="false">DeepSeek</button>
+        <button class="tab" role="tab" data-view="settings" aria-selected="false">设置</button>
+      </nav>
+      <div class="status" id="status-strip" aria-live="polite">
+        <span class="dot dot--idle" id="status-dot"></span>
+        <span id="status-text">未连接</span>
+      </div>
+    </header>
+
+    <main>
+      <!-- ------------------------------------------------------------------ -->
+      <section class="view is-active" id="view-clipboard" data-view="clipboard">
+        <div class="gate" id="clipboard-gate">
+          <form id="unlock-form" class="card gate__card">
+            <h2>共享云剪贴板</h2>
+            <p class="muted">
+              输入访问密码。密码需在服务端允许列表内；验证后获得临时令牌，
+              所有已验证的人看到同一份内容。
+            </p>
+            <label class="field">
+              <span>密码</span>
+              <input
+                id="password-input"
+                type="password"
+                autocomplete="current-password"
+                placeholder="访问密码"
+                required
+              />
+            </label>
+            <div class="row">
+              <button class="btn btn--primary" type="submit">验证</button>
+              <label class="check">
+                <input type="checkbox" id="remember-token" checked />
+                <span>记住令牌（本浏览器）</span>
+              </label>
+            </div>
+            <p class="form-error" id="unlock-error" role="alert" hidden></p>
+          </form>
+        </div>
+
+        <div class="work" id="clipboard-work" hidden>
+          <div class="work__editor">
+            <div class="editor-head">
+              <input id="entry-title" class="title-input" placeholder="标题（可选）" maxlength="200" />
+              <span class="muted" id="editor-hint"></span>
+            </div>
+            <div id="editor" class="editor"></div>
+            <div class="row row--end">
+              <button class="btn" id="copy-all" type="button">复制最新</button>
+              <button class="btn" id="upload-file" type="button">上传文件</button>
+              <input type="file" id="file-input" hidden multiple />
+              <button class="btn btn--primary" id="save-text" type="button">保存文本</button>
+            </div>
+          </div>
+
+          <aside class="work__list">
+            <div class="list-head">
+              <h3>共享内容</h3>
+              <div class="row row--tight">
+                <button class="btn btn--ghost btn--sm" id="refresh-list" type="button">刷新</button>
+                <button class="btn btn--ghost btn--sm btn--danger" id="clear-all" type="button">清空</button>
+              </div>
+            </div>
+            <p class="muted" id="list-meta"></p>
+            <ul class="entries" id="entry-list"></ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------------ -->
+      <section class="view" id="view-chat" data-view="chat">
+        <div class="chat">
+          <div class="chat__log" id="chat-log" aria-live="polite">
+            <p class="muted">
+              消息会排队等待转发通道（Edge Function，或已登录 DeepSeek 的浏览器标签页）领取。
+              打开“设置”查看当前可用通道。
+            </p>
+          </div>
+          <form class="chat__composer" id="chat-form">
+            <textarea
+              id="chat-input"
+              rows="3"
+              placeholder="向 DeepSeek 提问…（Ctrl/Cmd + Enter 发送）"
+            ></textarea>
+            <div class="row row--between">
+              <span class="muted" id="chat-status"></span>
+              <div class="row row--tight">
+                <button class="btn" id="chat-stop" type="button" hidden>停止</button>
+                <button class="btn btn--primary" id="chat-send" type="submit">发送</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------------------ -->
+      <section class="view" id="view-settings" data-view="settings">
+        <div class="settings">
+          <form class="card" id="config-form">
+            <h2>连接配置</h2>
+            <p class="muted">
+              代码是公开的，所以 Supabase 地址与 anon key 不写进仓库，只保存在本机浏览器
+              （localStorage）。也可以把 <code>config.js</code> 放在站点同目录来预填。
+            </p>
+            <label class="field">
+              <span>Supabase URL</span>
+              <input id="cfg-url" placeholder="https://xxxxxxxx.supabase.co" spellcheck="false" required />
+            </label>
+            <label class="field">
+              <span>Anon key</span>
+              <input id="cfg-anon" placeholder="eyJhbGciOi…" spellcheck="false" required />
+            </label>
+            <label class="field">
+              <span>DeepSeek 模型</span>
+              <input id="cfg-model" value="deepseek-chat" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span>转发通道</span>
+              <select id="cfg-transport">
+                <option value="auto">自动（优先 Edge Function）</option>
+                <option value="edge">仅 Edge Function</option>
+                <option value="browser">仅浏览器标签页</option>
+              </select>
+            </label>
+            <div class="row row--end">
+              <button class="btn btn--ghost" id="cfg-clear" type="button">清除本机配置</button>
+              <button class="btn btn--primary" type="submit">保存</button>
+            </div>
+            <p class="form-error" id="config-error" role="alert" hidden></p>
+          </form>
+
+          <div class="card">
+            <h2>后端状态</h2>
+            <dl class="kv" id="health-kv"><dt>…</dt></dl>
+            <h3>浏览器转发标签页</h3>
+            <p class="muted">
+              若 Edge Function 没有 DeepSeek 登录态：在已登录 chat.deepseek.com 的标签页里运行
+              <code>deepseek-worker.js</code>（书签脚本或控制台粘贴），它会领取队列里的任务并回传流。
+            </p>
+            <div class="row row--end">
+              <button class="btn" id="copy-worker" type="button">复制 worker 代码</button>
+              <a class="btn btn--ghost" id="worker-link" href="./deepseek-worker.js" target="_blank" rel="noopener">打开 worker 源码</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" hidden></div>
+  </body>
+</html>
