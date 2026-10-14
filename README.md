@@ -89,8 +89,8 @@ npm run relay:stop       # 停（前端会明确说「没有通道在领取任�
 
 | 路径 | 前置 | 是否向上游校验 |
 | --- | --- | --- |
-| 隐藏后台页粘贴（Edge Function 已部署时） | `TOOLS_ADMIN_TOKEN` secret | ✅ 先打 `create_pow_challenge` 再存 |
-| 隐藏后台页粘贴（Edge Function 未部署时） | `npm run admin:secret` 写入的令牌哈希 | �❌ 标记为未校验，下一轮请求的结果会回到状态条 |
+| 隐藏后台页粘贴（Edge Function 已部署时） | `TOOLS_ADMIN_TOKEN` secret | ✓ 先打 `create_pow_challenge` 再存 |
+| 隐藏后台页粘贴（Edge Function 未部署时） | `npm run admin:secret` 写入的令牌哈希 | �✗ 标记为未校验，下一轮请求的结果会回到状态条 |
 | `npm run deepseek:credential` | service role key | ✅ |
 
 后台页存的就是 PostgREST 的 `deepseek_credential_set_admin()`：浏览器用同一份解析代码把字符串拆成 `{token, deviceId, cookie, userAgent}`，令牌只在 RPC 里和 sha256 摘要比对（库里不存明文令牌），猜错 20 次锁 5 分钟。
