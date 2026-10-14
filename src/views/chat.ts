@@ -91,10 +91,11 @@ export function initChat(api: ToolsApi): ChatView {
     else if (!state.done) parts.push(`状态：${state.status}`);
     if (state.done) parts.push(describeLatency(state));
     else if (state.text || state.reasoning) parts.push('生成中…');
-    // A queued turn with nobody claiming it means the relay is not deployed — say so instead
-    // of letting the user stare at "排队中".
+    // A queued turn with nobody claiming it means the relay is not running — say so instead of
+    // letting the user stare at "排队中". The public page never names the Edge Function or any
+    // other server plumbing: the backend stays off-screen there.
     if (!state.done && state.status === 'queued' && Date.now() - state.startedAt > 15_000) {
-      parts.push('没有转发通道在领取任务（Edge Function 未部署？）');
+      parts.push('DeepSeek 暂时没有响应，请稍后再试');
     }
     statusLine.textContent = parts.join(' · ');
   }
