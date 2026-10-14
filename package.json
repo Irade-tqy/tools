@@ -19,7 +19,8 @@
     "allowlist": "node scripts/allowlist.mjs",
     "secrets:sync": "node scripts/secrets-sync.mjs",
     "functions:deploy": "node scripts/functions-deploy.mjs",
-    "pages:deploy": "node scripts/pages-deploy.mjs"
+    "pages:deploy": "node scripts/pages-deploy.mjs",
+    "pages:publish": "node scripts/pages-publish.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.0.0",

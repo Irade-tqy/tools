@@ -14,8 +14,10 @@
 | 数据库结构 / RPC / RLS / 限流 | 已应用到线上项目，60 项端到端检查通过（`npm run test:db`） |
 | 前端（剪贴板 / 对话 / 设置） | 已构建，真实浏览器 21 项检查通过（`npm run test:browser`） |
 | 单元测试 | 101 项通过（`npm test`） |
-| Pages 部署 | 走 GitHub Actions（`.github/workflows/deploy.yml`） |
+| Pages 部署 | **已上线** https://irade-tqy.github.io/tools/ ，21 项浏览器检查直接跑在线上站点 |
 | DeepSeek 通道 | 代码与回退路径已就绪；**等待登录态/密钥**，尚未跑通真实上游 |
+
+线上当前状态：`/functions/v1/deepseek-chat` 返回 404（未部署，缺 Supabase access token），前端会自动退到队列 + 浏览器 worker 路线 —— 这条路线已被上面的浏览器检查覆盖（模拟通道领取任务并流式回传）。
 
 DeepSeek 那一步之所以还没验证，是因为机器上没有可用的 DeepSeek 登录会话；一旦拿到 Cookie 或 API key：
 
@@ -48,17 +50,25 @@ npm test              # 101 项单元测试（crypto / sse / reducer / api / con
 npm run test:db       # 60 项线上后端端到端（PostgREST + Postgres）
 npm run test:browser  # 21 项浏览器冒烟：上传→加密→下载→解密、对话流式、令牌恢复
 npm run test:all      # 三个跑一遍
+
+# 冒烟测试也能直接打线上站点：
+SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 ```
 
 `test:db` / `test:browser` 会真的读写线上项目（结束前会清空剪贴板、排空对话队列）。
 
 ## 部署
 
+当前站点用 `npm run pages:publish` 发布：本地 `npm run build` 后把 `dist/` 强推到 `gh-pages` 分支，Pages 以 classic 模式从该分支构建。之所以先走这条路，是因为仓库现在的 fine-grained PAT 没有 **Workflows** 权限，推 `.github/workflows/*` 会被拒（`refusing to allow a Personal Access Token to create or update workflow … without 'workflow' scope`）。
+
+拿到带 Workflows 权限的 token 后：
+
 ```bash
-npm run pages:deploy -- --push   # 首次会顺手打开 Pages（workflow 构建模式）
+git push origin main                 # 把最后那个 “Add CI and Pages workflows” 提交推上去
+node scripts/pages-deploy.mjs        # 把 Pages 切成 workflow 构建模式
 ```
 
-Actions 里 `Deploy Pages` 会把 `dist/` 发布到 `https://<user>.github.io/tools/`。构建用相对路径，所以换仓库名或子目录都不用改配置。
+之后每次 push main 由 Actions 构建并发布；`dist/` 用相对路径构建，换仓库名或子目录都不用改配置。
 
 线上首次打开时，设置页填一次 Supabase URL + anon key 即可（只存本机）。想省掉这步，就把 `public/config.example.js` 复制成 `public/config.js` 填好——它被 git 忽略，构建时会一起进 `dist/`。
 
@@ -72,7 +82,7 @@ src/lib/                 config · api · crypto · sse · chat-reducer · rende
 src/views/               clipboard · chat · settings
 public/deepseek-worker.js 零依赖浏览器 worker（登录态标签页里跑）
 scripts/                 db-push · db-test · allowlist · browser-smoke · secrets-sync ·
-                         functions-deploy · pages-deploy
+                         functions-deploy · pages-publish · pages-deploy
 tests/                   vitest 单元测试
 ```
 

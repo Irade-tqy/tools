@@ -1,0 +1,154 @@
+// Shared loader for the local dev scripts. Reads ~/tools/.env.local (git-ignored) and
+// derives the handful of values the scripts need. Nothing here is ever committed.
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import pg from 'pg';
+
+export const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+export function loadEnv(file = '.env.local') {
+  const path = resolve(rootDir, file);
+  const env = { ...process.env };
+  if (!existsSync(path)) return env;
+  for (const raw of readFileSync(path, 'utf8').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (!(key in process.env)) env[key] = value;
+  }
+  return env;
+}
+
+export const env = loadEnv();
+
+export function requireEnv(name) {
+  const value = env[name];
+  if (!value) {
+    throw new Error(`missing ${name} — add it to .env.local (see .env.example)`);
+  }
+  return value;
+}
+
+export const supabaseUrl = (env.TOOLS_SUPABASE_URL || '').replace(/\/+$/, '');
+export const projectRef = supabaseUrl
+  ? new URL(supabaseUrl).hostname.split('.')[0]
+  : env.TOOLS_SUPABASE_REF || '';
+
+// Direct connections to db.<ref>.supabase.co are IPv6-only on newer projects; fall back
+// to the session pooler (IPv4, port 5432) when the machine has no IPv6 route.
+export function dbUrl() {
+  if (env.TOOLS_DB_URL) return env.TOOLS_DB_URL;
+  const password = requireEnv('TOOLS_SUPABASE_DB_PASSWORD');
+  const host = env.TOOLS_DB_HOST || `db.${projectRef}.supabase.co`;
+  const user = env.TOOLS_DB_USER || (host.includes('pooler') ? `postgres.${projectRef}` : 'postgres');
+  return `postgresql://${user}:${encodeURIComponent(password)}@${host}:5432/postgres`;
+}
+
+// pg connection config. Local TLS-intercepting proxies mean the Supabase chain cannot be
+// verified from this machine, so certificate checks are relaxed for dev scripts only.
+export function dbConfig() {
+  const insecure = env.TOOLS_DB_SSL === 'disable';
+  return {
+    connectionString: dbUrl().replace(/[?&]sslmode=[^&]*/, ''),
+    ssl: insecure ? false : { rejectUnauthorized: false },
+  };
+}
+
+export function anonKey() {
+  return requireEnv('TOOLS_SUPABASE_ANON_KEY');
+}
+
+export function serviceRoleKey() {
+  return requireEnv('TOOLS_SUPABASE_SERVICE_ROLE_KEY');
+}
+
+// Minimal PostgREST RPC client: no SDK, no build step, works from plain node.
+export async function rpc(fn, args, { key, token, method = 'POST' } = {}) {
+  const apiKey = key ?? anonKey();
+  const url = `${supabaseUrl}/rest/v1/rpc/${fn}`;
+  const headers = {
+    apikey: apiKey,
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    Prefer: 'return=representation',
+  };
+  if (token) headers['x-clipboard-token'] = token;
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: method === 'GET' ? undefined : JSON.stringify(args ?? {}),
+  });
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = { raw: text };
+  }
+  return { status: res.status, ok: res.ok, body: json };
+}
+
+// Claim and close everything sitting in the deepseek queue. Tests use this to start from a
+// known state (jobs otherwise linger for up to an hour) and to clean up afterwards.
+export async function drainDeepseekQueue(workerId = 'drain') {
+  let drained = 0;
+  for (let i = 0; i < 100; i += 1) {
+    const claim = await rpc('deepseek_claim', { p_worker_id: workerId });
+    if (!claim.body?.claimed) break;
+    await rpc('deepseek_complete', {
+      p_job_id: claim.body.job_id,
+      p_ok: false,
+      p_error: 'drained by tests',
+    });
+    drained += 1;
+  }
+  return drained;
+}
+
+// Resolve "owner/repo" from TOOLS_GH_REPO or the origin remote.
+export function ghRepo() {
+  const explicit = (env.TOOLS_GH_REPO || '').trim();
+  if (explicit) return explicit;
+  try {
+    const url = execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8' }).trim();
+    const match = url.match(/github\.com[:/]([^/]+\/[^/.]+)/);
+    if (match) return match[1];
+  } catch {
+    /* not a git checkout */
+  }
+  return '';
+}
+
+export function mask(value, keep = 6) {
+  if (!value) return '(unset)';
+  return value.length <= keep * 2 ? `${value.slice(0, 2)}…` : `${value.slice(0, keep)}…${value.slice(-4)}`;
+}
+
+// Supabase direct connections behind a local proxy drop occasionally; retry a few times
+// before giving up so one blip does not fail a whole migration or test run.
+export async function connectDb({ retries = 3, delayMs = 1200 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const client = new pg.Client(dbConfig());
+    try {
+      await client.connect();
+      return client;
+    } catch (err) {
+      lastError = err;
+      await client.end().catch(() => {});
+      if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}

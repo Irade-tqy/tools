@@ -64,7 +64,12 @@ export function initClipboard(api: ToolsApi): ClipboardView {
     work.hidden = false;
     if (!editor) {
       // CodeMirror is the heaviest dependency; only pay for it once the editor is visible.
+      const hint = document.createElement('p');
+      hint.className = 'muted';
+      hint.textContent = '加载编辑器…';
+      editorHost.append(hint);
       const { mountEditor } = await import('../lib/editor');
+      hint.remove();
       editor = mountEditor(editorHost);
       const current = editor;
       current.saveShortcut(() => void saveText());
