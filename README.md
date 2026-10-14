@@ -13,7 +13,7 @@
 | 部分 | 状态 |
 | --- | --- |
 | 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**99 项**端到端检查通过（`npm run test:db`） |
-| 单元测试 | **156 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
+| 单元测试 | **160 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
 | 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **43 项**检查通过（`npm run test:browser`），另有 **19 项**直接打线上站点（`npm run test:live`） |
@@ -46,6 +46,7 @@ POST /api/v0/chat/completion             {chat_session_id, parent_message_id, pr
 - **一条回复由多个 fragment 组成**，类型有 `RESPONSE / THINK / SEARCH / TOOL_SEARCH / TOOL_OPEN / TOOL_FIND / TIP / FILE`。只有 `RESPONSE` 是答案；把全部内容拼起来会把工具噪音混进正文，还会丢每个新 fragment 的首块。
 - **`[citation:N]` 按 `cite_index` 查**，不是按数组顺序（官网的 `convertCiteIndexToListIndex` 同理）。前端不渲染引用，只在合适位置显示「已调用工具：网页搜索 · 6 个结果」。
 - **`WIP` 是正常终态**（停止或纯工具回答），不能当失败。
+- **seq 不能当「已渲染」的水位线用**：同一个客户端由三条通道同时喂（Realtime、轮询兜底、Edge SSE），块会乱序到达。原先 `seq <= lastSeq` 直接丢弃，而订阅建立时 seq 0（工具块）往往已经写完了，于是 seq 1 先到、seq 0 永远不再被提供 —— 线上「已调用工具」标记就此消失。现在按 seq 重排：只应用连续前缀，早到的块进缓冲，游标用 `nextSeq - 1` 向服务端要缺口；终态或缺口 3 轮没补上就 `flushPending` 放尾巴（`tests/chat-reducer.test.ts` 钉住这几种到达顺序）。
 
 ### 转发通道（relay）：两个宿主，一份协议
 
@@ -138,7 +139,7 @@ npm run dev                                           # http://127.0.0.1:5173
 ## 测试
 
 ```bash
-npm test              # 156 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
+npm test              # 160 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
 npm run test:db       # 99 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek

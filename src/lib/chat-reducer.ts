@@ -64,6 +64,12 @@ export interface ChatState {
   error: string | null;
   done: boolean;
   lastSeq: number;
+  /** The lowest seq not yet applied. Everything below it is in the answer, in order. */
+  nextSeq: number;
+  /** Chunks that arrived ahead of `nextSeq`; held until the gap in front of them fills. */
+  pending: Map<number, ChunkPayload>;
+  /** When the oldest held chunk arrived, so a permanently missing seq cannot stall the answer. */
+  pendingSince: number | null;
   metrics: Metrics;
   tools: ToolPayload[];
   citations: ChatCitation[];
@@ -91,6 +97,9 @@ export function createChatState(startedAt = Date.now()): ChatState {
     error: null,
     done: false,
     lastSeq: -1,
+    nextSeq: 0,
+    pending: new Map<number, ChunkPayload>(),
+    pendingSince: null,
     metrics: {},
     tools: [],
     citations: [],
@@ -121,11 +130,57 @@ function upsertTool(state: ChatState, tool: ToolPayload): void {
   if (tool.page) existing.page = tool.page;
 }
 
+/**
+ * Three transports feed this client at once — Realtime, the polling fallback and the Edge SSE
+ * — so chunks arrive out of order and sometimes twice. Applying them in arrival order would
+ * scramble the answer; dropping anything below a high-water mark loses the chunk that arrived
+ * late, which is how the "已调用工具" chip disappeared on the deployed site: the subscription
+ * started after the relay wrote seq 0 (the tool payload), so seq 1 landed first and seq 0 was
+ * never offered again. Hold anything that is early, apply the contiguous prefix, and let the
+ * cursor ask the server for the hole.
+ */
 export function applyChunk(state: ChatState, seq: number, payload: ChunkPayload, now = Date.now()): ChatState {
-  // Chunks are appended with a monotonic seq by the transport; Realtime can redeliver, and
-  // the SSE path may race the polling fallback, so drop anything already rendered.
-  if (seq <= state.lastSeq) return state;
-  state.lastSeq = seq;
+  if (seq < state.nextSeq) return state; // already in the answer (redelivery)
+  if (state.pending.has(seq)) return state; // buffered copy of the same seq
+  if (seq !== state.nextSeq) {
+    state.pending.set(seq, payload);
+    if (state.pendingSince === null) state.pendingSince = now;
+    return state;
+  }
+  applyPayload(state, seq, payload, now);
+  drainPending(state, now);
+  return state;
+}
+
+/**
+ * Apply whatever is buffered, in seq order, without waiting for the gap in front of it. Used
+ * when the turn finishes (the tail must not be held hostage) and when a hole stops refilling
+ * (a chunk the relay could not write is gone for good).
+ */
+export function flushPending(state: ChatState, now = Date.now()): ChatState {
+  if (!state.pending.size) return state;
+  for (const seq of [...state.pending.keys()].sort((a, b) => a - b)) {
+    const payload = state.pending.get(seq)!;
+    state.pending.delete(seq);
+    applyPayload(state, seq, payload, now);
+  }
+  state.nextSeq = state.lastSeq + 1;
+  state.pendingSince = null;
+  return state;
+}
+
+function drainPending(state: ChatState, now: number): void {
+  while (state.pending.has(state.nextSeq)) {
+    const payload = state.pending.get(state.nextSeq)!
+    state.pending.delete(state.nextSeq);
+    applyPayload(state, state.nextSeq, payload, now);
+  }
+  state.pendingSince = state.pending.size ? (state.pendingSince ?? now) : null;
+}
+
+function applyPayload(state: ChatState, seq: number, payload: ChunkPayload, now: number): ChatState {
+  if (seq > state.lastSeq) state.lastSeq = seq;
+  if (seq >= state.nextSeq) state.nextSeq = seq + 1;
 
   if (payload?._transport) state.transport = payload._transport;
 
@@ -164,6 +219,15 @@ export function applyChunk(state: ChatState, seq: number, payload: ChunkPayload,
   return state;
 }
 
+/**
+ * The `since_seq` value to ask the server for: one below `nextSeq`, i.e. from the first seq we
+ * are still missing. Using `lastSeq` strands a hole — the server only returns `seq > since_seq`,
+ * so a chunk that arrived too early to apply would never be offered again.
+ */
+export function chunkCursor(state: ChatState): number {
+  return state.nextSeq - 1;
+}
+
 export interface StatusSnapshot {
   status?: string;
   transport?: string | null;
@@ -190,6 +254,10 @@ export function applyStatus(state: ChatState, snapshot: StatusSnapshot, now = Da
   for (const chunk of snapshot.chunks ?? []) {
     applyChunk(state, chunk.seq, chunk.payload, now);
   }
+
+  // The tail must never be held in the buffer: once the job is finished, whatever arrived is
+  // all there will ever be, so a hole in front of it is permanent.
+  if (snapshot.finished) flushPending(state, now);
 
   // WIP is a normal terminal state for DeepSeek (a stopped or tool-only answer), so only a
   // job the backend actually finished counts as done.

@@ -76,7 +76,7 @@ async function rpc(fn, args) {
  * normalized chunks the real relay sends (v1 text / tool / done frames), then complete the
  * job with the conversation ids so the UI can continue the session.
  */
-async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool }) {
+async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool, outOfOrderTool }) {
   const workerId = `smoke-${Math.random().toString(36).slice(2, 8)}`;
   const started = Date.now();
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -86,35 +86,41 @@ async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageI
       continue;
     }
     const pieces = respondWith.match(/.{1,3}/gu) || [];
-    let seq = 0;
-    const append = async (payload) => {
-      const out = await rpc('deepseek_append', { p_job_id: claim.job_id, p_seq: seq, p_payload: payload });
-      seq += 1;
+    const toolPayload = withTool
+      ? {
+          v: 1,
+          _transport: 'smoke',
+          tool: {
+            id: 1,
+            type: 'SEARCH',
+            status: 'FINISHED',
+            label: '搜索到 2 个网页',
+            queries: ['上海天气'],
+            results: [
+              { cite_index: 1, title: '气象台', url: 'https://a.example', site_name: 'a.example', snippet: '晴' },
+              { cite_index: 2, title: '天气网', url: 'https://b.example', site_name: 'b.example', snippet: '多云' },
+            ],
+            page: null,
+          },
+        }
+      : null;
+    // The live race, made deterministic: the browser subscribes after the relay writes the first
+    // chunk, so the tool payload (seq 0) can reach it last. Writing seq 0 last reproduces that
+    // ordering on every run instead of waiting for the race to happen by luck.
+    let seq = toolPayload && outOfOrderTool ? 1 : 0;
+    const append = async (payload, atSeq) => {
+      const use = atSeq ?? seq;
+      const out = await rpc('deepseek_append', { p_job_id: claim.job_id, p_seq: use, p_payload: payload });
+      if (atSeq == null) seq += 1;
       return out;
     };
-    if (withTool) {
-      await append({
-        v: 1,
-        _transport: 'smoke',
-        tool: {
-          id: 1,
-          type: 'SEARCH',
-          status: 'FINISHED',
-          label: '搜索到 2 个网页',
-          queries: ['上海天气'],
-          results: [
-            { cite_index: 1, title: '气象台', url: 'https://a.example', site_name: 'a.example', snippet: '晴' },
-            { cite_index: 2, title: '天气网', url: 'https://b.example', site_name: 'b.example', snippet: '多云' },
-          ],
-          page: null,
-        },
-      });
-    }
+    if (toolPayload && !outOfOrderTool) await append(toolPayload);
     for (const piece of pieces) {
       await new Promise((r) => setTimeout(r, 40));
       const out = await append({ v: 1, _transport: 'smoke', text: piece });
       if (!out.ok && abortOnSeq != null && seq >= abortOnSeq) return { job_id: claim.job_id, cancelled: true, seq, claim };
     }
+    if (toolPayload && outOfOrderTool) await append(toolPayload, 0);
     await append({
       v: 1,
       _transport: 'smoke',
@@ -348,7 +354,15 @@ try {
   );
 
   // --- chat: a second turn continues the same conversation (the transport sees its ids)
-  const transport2 = fakeTransport({ respondWith: secondAnswer, sessionId: 'sess-continued', replyMessageId: 9, withTool: true });
+  // The tool payload is written with seq 0 but last, so the browser has to reorder the stream:
+  // with a high-water-mark dedupe the chip below disappears (the bug that shipped).
+  const transport2 = fakeTransport({
+    respondWith: secondAnswer,
+    sessionId: 'sess-continued',
+    replyMessageId: 9,
+    withTool: true,
+    outOfOrderTool: true,
+  });
   await page.fill('#chat-input', '第二句');
   await page.click('#chat-send');
   await page.waitForFunction(() => document.querySelectorAll('.msg--user').length >= 2, { timeout: 15_000 });
@@ -371,7 +385,9 @@ try {
   );
   check('the continued answer renders', true);
   const chip = (await page.textContent('.chip--tool')) || '';
-  check('a tool-using turn shows a "已调用工具" chip', /已调用工具/.test(chip) && /网页搜索/.test(chip), chip);
+  check('a tool-using turn shows a "已调用工具" chip even when its chunk arrives last', /已调用工具/.test(chip) && /网页搜索/.test(chip), chip);
+  const continuedBody = (await page.textContent('.msg--assistant:last-of-type .msg__body')) || '';
+  check('an out-of-order stream renders complete and in order', continuedBody === secondAnswer, continuedBody.slice(0, 160));
 
   // --- chat: 新会话 drops the conversation
   await page.evaluate(() => {

@@ -3,8 +3,10 @@ import {
   LATENCY_BUDGET_MS,
   applyChunk,
   applyStatus,
+  chunkCursor,
   createChatState,
   describeLatency,
+  flushPending,
   formatMs,
   latencyOf,
   sourcesOf,
@@ -47,12 +49,57 @@ describe('applyChunk', () => {
     expect(state.text).toBe('9.11 更大');
   });
 
-  it('drops redelivered chunks (realtime can replay, sse races the poller)', () => {
+  it('holds an out-of-order chunk so the answer stays in seq order', () => {
     const state = createChatState();
-    applyChunk(state, 3, { text: 'a' });
-    applyChunk(state, 2, { text: 'IGNORED' });
-    applyChunk(state, 3, { text: 'IGNORED' });
-    expect(state.text).toBe('a');
+    applyChunk(state, 1, { text: '好' }, 10);
+    expect(state.text).toBe(''); // seq 0 is still missing — hold it, do not append early
+    applyChunk(state, 0, { text: '你' }, 11);
+    expect(state.text).toBe('你好');
+    applyChunk(state, 1, { text: 'IGNORED' }, 12); // exact replay
+    expect(state.text).toBe('你好');
+    expect(state.lastSeq).toBe(1);
+    expect(state.nextSeq).toBe(2);
+  });
+
+  it('keeps a tool payload that arrives after a later text chunk', () => {
+    // The live failure this guards: the subscription started after the relay wrote seq 0 (the
+    // SEARCH payload), so seq 1 landed first and the "已调用工具" chip never appeared.
+    const state = createChatState();
+    applyChunk(state, 1, { text: '今天晴' }, 10);
+    applyChunk(state, 0, { tool: tool() }, 11);
+    expect(toolSummaryOf(state).used).toBe(true);
+    expect(toolSummaryOf(state).kinds).toEqual(['网页搜索 · 2 个结果']);
+    expect(state.text).toBe('今天晴');
+  });
+
+  it('asks for the lowest missing seq so a gap refills', () => {
+    const state = createChatState();
+    expect(chunkCursor(state)).toBe(-1);
+    applyChunk(state, 1, { text: 'b' }, 10);
+    // seq 0 is still missing: the server only returns seq > since_seq, so the cursor has to
+    // sit below the hole or the chunk is stranded forever.
+    expect(chunkCursor(state)).toBe(-1);
+    applyChunk(state, 0, { tool: tool() }, 11);
+    expect(chunkCursor(state)).toBe(1);
+    applyChunk(state, 2, { done: true }, 12);
+    expect(chunkCursor(state)).toBe(2);
+  });
+
+  it('releases buffered chunks when the hole is permanent', () => {
+    const state = createChatState();
+    applyChunk(state, 2, { text: '尾' }, 10);
+    expect(state.text).toBe('');
+    flushPending(state, 20);
+    expect(state.text).toBe('尾');
+    expect(chunkCursor(state)).toBe(2);
+  });
+
+  it('releases the tail as soon as the job reports finished', () => {
+    const state = createChatState();
+    applyChunk(state, 2, { text: '尾' }, 10);
+    applyStatus(state, { status: 'done', finished: true }, 20);
+    expect(state.text).toBe('尾');
+    expect(state.done).toBe(true);
   });
 
   it('ends the turn on an error chunk', () => {

@@ -77,6 +77,44 @@ try {
   info = {};
 }
 console.log(`pages url: ${info.html_url || '(unknown)'}  source: ${info.source?.build_type || info.build_type || 'classic'}  status: ${info.status || 'n/a'}`);
-if ((info.source?.build_type || info.build_type) === 'workflow') {
+const workflowBuild = (info.source?.build_type || info.build_type) === 'workflow';
+if (workflowBuild) {
   console.log('deploys now come from the “Deploy Pages” workflow (push to main or Actions → Run workflow)');
+}
+
+// --push used to be documented in the header but never implemented, so `npm run pages:deploy
+// --push` reported the Pages state and left the commit local — the site kept serving the
+// previous build. Push, then wait for the workflow that publishes it, because "deployed" is
+// only true once the deployment job finishes.
+if (process.argv.includes('--push')) {
+  if (!workflowBuild) {
+    console.log('pushing to origin …');
+  }
+  execFileSync('git', ['push', 'origin', `${branch}`], { stdio: 'inherit' });
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+  if (!workflowBuild) process.exit(0);
+
+  console.log(`waiting for the Deploy Pages workflow to publish ${sha.slice(0, 7)} …`);
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let run = null;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 15_000));
+    const runs = await api(`/repos/${repo}/actions/workflows/deploy.yml/runs?head_sha=${sha}&per_page=1`);
+    const body = await runs.json().catch(() => ({}));
+    run = body?.workflow_runs?.[0];
+    if (!run) continue;
+    console.log(`  ${run.status}${run.conclusion ? ` / ${run.conclusion}` : ''}`);
+    if (run.status === 'completed') break;
+  }
+
+  if (!run) {
+    console.error('no Deploy Pages run appeared for this commit — check Actions → Deploy Pages');
+    process.exit(1);
+  }
+  if (run.conclusion !== 'success') {
+    console.error(`deploy ${run.conclusion}: ${run.html_url}`);
+    process.exit(1);
+  }
+  console.log(`published: ${info.html_url || ''}`);
 }

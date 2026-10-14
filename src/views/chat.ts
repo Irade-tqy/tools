@@ -3,14 +3,17 @@
 // One turn = one prompt plus the two ids that place it in a conversation (chat_session_id,
 // parent_message_id). DeepSeek keeps the history, so continuing means passing them back and
 // "新会话" means dropping them. The answer arrives over the Edge Function's SSE, Realtime, or
-// a polling fallback — all three feed the same reducer, which dedupes by seq.
+// a polling fallback — all three feed the same reducer, which dedupes by the exact seq and
+// asks for the lowest missing one so a late chunk is never stranded.
 
 import type { ToolsApi } from '../lib/api';
 import {
   applyChunk,
   applyStatus,
+  chunkCursor,
   createChatState,
   describeLatency,
+  flushPending,
   latencyOf,
   toolSummaryOf,
   type ChatState,
@@ -179,7 +182,7 @@ export function initChat(api: ToolsApi): ChatView {
     if (state.jobId) {
       for (let attempt = 0; attempt < 20; attempt += 1) {
         try {
-          const res = await api.jobStatus(state.jobId, state.lastSeq);
+          const res = await api.jobStatus(state.jobId, chunkCursor(state));
           if (!res.ok) break;
           applyStatus(state, res);
           if (res.finished) break;
@@ -189,6 +192,9 @@ export function initChat(api: ToolsApi): ChatView {
         await sleep(150);
       }
     }
+    // Whatever is still buffered belongs to this answer; a hole the polls have not refilled by
+    // now is a chunk the relay could not write at all.
+    flushPending(state, Date.now());
     state.done = true;
     state.finishedAt = state.finishedAt ?? Date.now();
     if (reason) state.error = reason;
@@ -218,8 +224,14 @@ export function initChat(api: ToolsApi): ChatView {
     if (!state?.jobId || jobFinished) return;
     pollTimer = setTimeout(async () => {
       if (!state?.jobId || jobFinished) return;
+      // A gap that three polls have not refilled is not coming back; release what is behind it
+      // instead of freezing the answer at "…".
+      if (state.pending.size && state.pendingSince !== null && Date.now() - state.pendingSince > 3 * POLL_INTERVAL_MS) {
+        flushPending(state, Date.now());
+        renderAssistant();
+      }
       try {
-        const res = await api.jobStatus(state.jobId, state.lastSeq);
+        const res = await api.jobStatus(state.jobId, chunkCursor(state));
         if (res.ok) {
           applyStatus(state, res);
           renderAssistant();
