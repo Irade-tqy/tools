@@ -25,6 +25,7 @@ const {
   saveConfig,
   saveToken,
 } = config;
+const { DEFAULT_SUPABASE_ANON_KEY, DEFAULT_SUPABASE_URL } = await import('../src/lib/defaults');
 
 const win = globalThis as unknown as { window: { TOOLS_CONFIG?: Record<string, string> } };
 
@@ -77,8 +78,13 @@ describe('url helpers', () => {
 describe('loadConfig precedence', () => {
   const longKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.aaaaaaaaaaaa';
 
-  it('defaults model and transport', () => {
-    expect(loadConfig('')).toEqual({ url: '', anonKey: '', model: 'deepseek-chat', transport: 'auto' });
+  it('falls back to the baked-in public defaults', () => {
+    expect(loadConfig('')).toEqual({
+      url: DEFAULT_SUPABASE_URL,
+      anonKey: DEFAULT_SUPABASE_ANON_KEY,
+      model: 'deepseek-chat',
+      transport: 'auto',
+    });
   });
 
   it('localStorage is the base layer', () => {
@@ -106,11 +112,15 @@ describe('loadConfig precedence', () => {
 
   it('survives corrupt stored JSON', () => {
     store.set(CONFIG_KEY, '{not json');
-    expect(loadConfig('')).toEqual({ url: '', anonKey: '', model: 'deepseek-chat', transport: 'auto' });
+    expect(loadConfig('').url).toBe(DEFAULT_SUPABASE_URL);
   });
 });
 
 describe('isConfigured', () => {
+  it('is satisfied by the baked-in defaults alone', () => {
+    expect(isConfigured(loadConfig(''))).toBe(true);
+  });
+
   it('requires a plausible url and a real-looking key', () => {
     const base = { url: 'https://x.supabase.co', anonKey: 'x'.repeat(40), model: 'm', transport: 'auto' as const };
     expect(isConfigured(base)).toBe(true);

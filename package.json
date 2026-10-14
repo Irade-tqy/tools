@@ -16,6 +16,8 @@
     "test:all": "npm test && npm run test:db && npm run test:browser",
     "db:push": "node scripts/db-push.mjs",
     "db:status": "node scripts/db-push.mjs --status",
+    "defaults:sync": "node scripts/defaults-sync.mjs",
+    "defaults:check": "node scripts/defaults-sync.mjs --check",
     "allowlist": "node scripts/allowlist.mjs",
     "secrets:sync": "node scripts/secrets-sync.mjs",
     "deepseek:login": "node scripts/deepseek-login.mjs",

@@ -2,6 +2,12 @@
 // baked into the bundle: they come from (in order) a git-ignored ./config.js next to
 // index.html, the URL hash, or localStorage entered by the user on first visit.
 
+import {
+  DEFAULT_MODEL,
+  DEFAULT_SUPABASE_ANON_KEY,
+  DEFAULT_SUPABASE_URL,
+} from './defaults';
+
 export type Transport = 'auto' | 'edge' | 'browser';
 
 export interface Config {
@@ -22,7 +28,7 @@ declare global {
 }
 
 const DEFAULTS: Pick<Config, 'model' | 'transport'> = {
-  model: 'deepseek-chat',
+  model: DEFAULT_MODEL,
   transport: 'auto',
 };
 
@@ -94,7 +100,15 @@ function merge(...parts: Array<Partial<Config> | undefined>): Config {
 }
 
 export function loadConfig(hash = ''): Config {
-  return merge(readStored(), window.TOOLS_CONFIG, parseHashConfig(hash));
+  // Lowest → highest: baked-in defaults, localStorage, ./config.js, the URL hash.
+  // The URL and anon key are public values (RLS is the real boundary), so the deployed
+  // site works with zero setup; the other layers let a self-hosted project override them.
+  return merge(
+    { url: DEFAULT_SUPABASE_URL, anonKey: DEFAULT_SUPABASE_ANON_KEY },
+    readStored(),
+    window.TOOLS_CONFIG,
+    parseHashConfig(hash),
+  );
 }
 
 /**

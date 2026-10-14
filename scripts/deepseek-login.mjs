@@ -114,22 +114,31 @@ try {
           rmSync(codeFile, { force: true });
         }
       }
+      // The user may just as well type the code into the visible window themselves; if the
+      // app has left the sign-in page, skip the fill step and go straight to the export.
+      if (!code && !/sign_in/.test(page.url())) {
+        log('sign-in page already left — assuming the code was entered by hand');
+        break;
+      }
       if (!code) await new Promise((r) => setTimeout(r, 500));
     }
-    if (!code) throw new Error(`no verification code arrived in ${timeoutMs / 1000}s (write it to ${codeFile})`);
-    log(`code received (${code.length} digits)`);
+    if (!code && /sign_in/.test(page.url())) {
+      throw new Error(`no verification code arrived in ${timeoutMs / 1000}s (write it to ${codeFile})`);
+    }
+    if (code) log(`code received (${code.length} digits)`);
 
     const codeInput = page.locator('input[placeholder="请输入验证码"]').first();
-    await codeInput.waitFor({ state: 'visible', timeout: 10_000 });
-    await codeInput.fill(code);
+    if (await codeInput.isVisible().catch(() => false)) {
+      await codeInput.fill(code);
 
-    const submit = page.getByRole('button', { name: /登录|登 录/ }).first();
-    if (await submit.isVisible().catch(() => false)) {
-      await submit.click();
-      log('clicked the login button');
-    } else {
-      await codeInput.press('Enter');
-      log('pressed Enter in the code field');
+      const submit = page.getByRole('button', { name: /登录|登 录/ }).first();
+      if (await submit.isVisible().catch(() => false)) {
+        await submit.click();
+        log('clicked the login button');
+      } else {
+        await codeInput.press('Enter');
+        log('pressed Enter in the code field');
+      }
     }
   }
 

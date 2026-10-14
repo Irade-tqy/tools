@@ -113,8 +113,9 @@
           <form class="card" id="config-form">
             <h2>连接配置</h2>
             <p class="muted">
-              代码是公开的，所以 Supabase 地址与 anon key 不写进仓库，只保存在本机浏览器
-              （localStorage）。也可以把 <code>config.js</code> 放在站点同目录来预填。
+              本项目已内置 Supabase 地址与 anon key —— 这两个值是公开的客户端凭据，
+              数据边界由行级安全策略（RLS）控制。自托管到其他 project 时才需要在这里覆盖，
+              覆盖值只存本机浏览器。
             </p>
             <label class="field">
               <span>Supabase URL</span>

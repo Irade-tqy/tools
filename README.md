@@ -5,16 +5,16 @@
 - **云剪贴板**：共享模式。密码来自服务端允许列表，验证后拿到临时令牌；所有已验证用户看到同一份内容。文本明文存储，文件在浏览器内用 AES-GCM 加密后再上传。条目默认保留 7 天，访问时顺带清理过期项。
 - **DeepSeek 对话**：消息进入队列，由两条通道之一领取并流式回传 —— Edge Function（凭据存在 Supabase secret 里），或一个**已登录 DeepSeek 的浏览器标签页**（跑 `deepseek-worker.js`）。界面实时显示首字延迟、排队时间与“相对官网额外耗时”。
 
-代码是公开的，**仓库里没有任何密钥、Cookie 或凭据**：Supabase 地址与 anon key 存在本机浏览器（或自托管的 `config.js`），DeepSeek 凭据存在 Supabase secret / Vault。
+代码是公开的，里面只有**公开值**：Supabase 地址与 anon key 已内置在 `src/lib/defaults.ts`（anon key 本来就是客户端公开凭据，数据边界是 RLS；`tests/defaults.test.ts` 会拦住误提交 service key）。真正的密钥 —— service role key、数据库密码、剪贴板密码、DeepSeek Cookie —— 不进仓库。
 
 ## 当前状态
 
 | 部分 | 状态 |
 | --- | --- |
 | 数据库结构 / RPC / RLS / 限流 | 已应用到线上项目，60 项端到端检查通过（`npm run test:db`） |
-| 前端（剪贴板 / 对话 / 设置） | 已构建，真实浏览器 21 项检查通过（`npm run test:browser`） |
-| 单元测试 | 101 项通过（`npm test`） |
-| Pages 部署 | **已上线** https://irade-tqy.github.io/tools/ ，21 项浏览器检查直接跑在线上站点 |
+| 前端（剪贴板 / 对话 / 设置） | 已构建，真实浏览器 22 项检查通过（`npm run test:browser`） |
+| 单元测试 | 107 项通过（`npm test`） |
+| Pages 部署 | **已上线** https://irade-tqy.github.io/tools/ ，22 项浏览器检查直接跑在线上站点 |
 | DeepSeek 通道 | 代码与回退路径已就绪；**等待登录态/密钥**，尚未跑通真实上游 |
 
 线上当前状态：`/functions/v1/deepseek-chat` 返回 404（未部署，缺 Supabase access token），前端会自动退到队列 + 浏览器 worker 路线 —— 这条路线已被上面的浏览器检查覆盖（模拟通道领取任务并流式回传）。
@@ -48,9 +48,9 @@ npm run dev                                           # http://127.0.0.1:5173
 ## 测试
 
 ```bash
-npm test              # 101 项单元测试（crypto / sse / reducer / api / config / render）
+npm test              # 107 项单元测试（crypto / sse / reducer / api / config / defaults / render）
 npm run test:db       # 60 项线上后端端到端（PostgREST + Postgres）
-npm run test:browser  # 21 项浏览器冒烟：上传→加密→下载→解密、对话流式、令牌恢复
+npm run test:browser  # 22 项浏览器冒烟：内置默认值、上传→加密→下载→解密、对话流式、令牌恢复
 npm run test:all      # 三个跑一遍
 
 # 冒烟测试也能直接打线上站点：
@@ -61,18 +61,17 @@ SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 
 ## 部署
 
-当前站点用 `npm run pages:publish` 发布：本地 `npm run build` 后把 `dist/` 强推到 `gh-pages` 分支，Pages 以 classic 模式从该分支构建。之所以先走这条路，是因为仓库现在的 fine-grained PAT 没有 **Workflows** 权限，推 `.github/workflows/*` 会被拒（`refusing to allow a Personal Access Token to create or update workflow … without 'workflow' scope`）。
+Pages 由 GitHub Actions 发布：push main → `Deploy Pages` 工作流跑 `npm run build` → `actions/deploy-pages` 发布 `dist/`。构建用相对路径，换仓库名或子目录都不用改配置。`CI` 工作流同时跑 typecheck + 构建 + 单测（线上测试用仓库变量 `LIVE_TESTS` / `BROWSER_TESTS` 开关）。
 
-拿到带 Workflows 权限的 token 后：
+打开（或切回）Actions 构建：
 
 ```bash
-git push origin main                 # 把最后那个 “Add CI and Pages workflows” 提交推上去
-node scripts/pages-deploy.mjs        # 把 Pages 切成 workflow 构建模式
+node scripts/pages-deploy.mjs --workflow
 ```
 
-之后每次 push main 由 Actions 构建并发布；`dist/` 用相对路径构建，换仓库名或子目录都不用改配置。
+`npm run pages:publish`（把 `dist/` 强推到 `gh-pages` 分支的 classic 模式）作为备选保留，不依赖 Actions。
 
-线上首次打开时，设置页填一次 Supabase URL + anon key 即可（只存本机）。想省掉这步，就把 `public/config.example.js` 复制成 `public/config.js` 填好——它被 git 忽略，构建时会一起进 `dist/`。
+线上打开就能用，不需要填任何配置。自托管到别的 Supabase project 时，在设置页填一次 URL + anon key（只存本机），或者把 `public/config.example.js` 复制成 `public/config.js` 填好（被 git 忽略，构建时进 `dist/`），也可以用 `#supabase=…&anon=…` 临时覆盖。改了 `.env.local` 里的 project 后跑 `npm run defaults:sync` 同步内置默认值。
 
 ## 结构
 
@@ -91,6 +90,7 @@ tests/                   vitest 单元测试
 
 ## 安全模型
 
+- **公开值与密钥分界**：URL + anon key 内置在 `src/lib/defaults.ts`，`tests/defaults.test.ts` 解码 JWT 断言 `role === 'anon'`、ref 与 URL 一致，并拦住文件里出现任何非 anon 的 JWT。service role key、DB 密码、DeepSeek Cookie 只在 `.env.local` / Supabase secret 里。
 - **允许列表**：`clipboard_secret.pw_hash` 存 bcrypt（`crypt()` 在库内计算）。明文密码只在 `.env.local` 和浏览器内存里。
 - **令牌**：`clipboard_verify` 发 256 位随机令牌，库里只存 sha256；后续请求带 `x-clipboard-token` 头。默认 12 小时过期。
 - **限流**：同一密码 15 分钟内最多 10 次失败，全局 5 分钟最多 120 次失败；失败记录只存 `sha256(密码|日期)`，不存明文。

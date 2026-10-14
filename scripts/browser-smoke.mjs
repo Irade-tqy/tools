@@ -180,11 +180,22 @@ try {
     if (req.url().includes('/rpc/')) rpcCalls.push(req.url().split('/rpc/')[1]);
   });
 
-  const hash = `#supabase=${encodeURIComponent(supabaseUrl)}&anon=${encodeURIComponent(anonKey())}`;
-  await page.goto(`${origin}index.html${hash}`, { waitUntil: 'load' });
+  // Precedence check first: a hash override must beat the baked-in defaults.
+  await page.goto(`${origin}index.html#supabase=https%3A%2F%2Fbogus.supabase.co&anon=short`, {
+    waitUntil: 'load',
+  });
+  await page.waitForTimeout(600);
+  check(
+    'a URL-hash override replaces the baked-in defaults',
+    await page.isVisible('#view-settings.is-active'),
+    await page.textContent('#status-text'),
+  );
+
+  // The real run uses the defaults committed in src/lib/defaults.ts — no setup, no hash.
+  await page.goto(`${origin}index.html`, { waitUntil: 'load' });
 
   check('the app loads without page errors or failing requests', pageErrors.length === 0 && httpErrors.length === 0, [...pageErrors, ...httpErrors].join('\n'));
-  check('config came from the URL hash (no setup screen)', await page.isVisible('#clipboard-gate'));
+  check('works with the baked-in defaults (no setup screen)', await page.isVisible('#clipboard-gate'));
 
   // --- clipboard: unlock, save text, list it
   await page.fill('#password-input', 'wrong-password-on-purpose');

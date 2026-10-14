@@ -2,7 +2,8 @@
 // Enable GitHub Pages (workflow build type) for this repo, and optionally push the branch.
 // The workflow itself publishes dist/ with actions/deploy-pages.
 //
-//   node scripts/pages-deploy.mjs            # enable Pages if needed, report the URL
+//   node scripts/pages-deploy.mjs            # report Pages state (enable if missing)
+//   node scripts/pages-deploy.mjs --workflow # switch an existing site to Actions builds
 //   node scripts/pages-deploy.mjs --push     # …then git push origin <branch>
 import { execFileSync } from 'node:child_process';
 import { env, ghRepo } from './lib.mjs';
@@ -33,6 +34,7 @@ const api = (path, init = {}) =>
 const branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
 
 let pages = await api(`/repos/${repo}/pages`);
+const wantWorkflow = process.argv.includes('--workflow');
 if (pages.status === 404) {
   console.log(`Pages is not enabled for ${repo} — enabling (workflow build)`);
   pages = await api(`/repos/${repo}/pages`, {
@@ -50,6 +52,18 @@ if (pages.status === 404) {
   console.error(`token cannot manage Pages: HTTP ${pages.status} ${body.slice(0, 200)}`);
   console.error('grant the PAT "Pages: write" or enable Pages by hand: Settings → Pages → Source: GitHub Actions');
   process.exit(1);
+} else if (wantWorkflow) {
+  // Switch an existing classic (branch-source) Pages site over to Actions builds.
+  console.log('switching Pages to workflow builds …');
+  pages = await api(`/repos/${repo}/pages`, {
+    method: 'PUT',
+    body: JSON.stringify({ build_type: 'workflow' }),
+  });
+  if (!pages.ok) {
+    const body = await pages.text();
+    console.error(`switch failed: HTTP ${pages.status} ${body.slice(0, 300)}`);
+    process.exit(1);
+  }
 }
 
 const info = await pages.json();
