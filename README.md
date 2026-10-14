@@ -16,7 +16,7 @@
 | 单元测试 | **160 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
-| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **43 项**检查通过（`npm run test:browser`），另有 **19 项**直接打线上站点（`npm run test:live`） |
+| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **44 项**检查通过（`npm run test:browser`，含故意乱序投递的块流），另有 **19 项**直接打线上站点（`npm run test:live`） |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
@@ -143,7 +143,7 @@ npm test              # 160 项单元测试（credential 解析 / 流回放 / Po
 npm run test:db       # 99 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
-npm run test:browser  # 43 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记、后台隐藏、粘贴登录态
+npm run test:browser  # 44 项浏览器冒烟：内置默认值、上传→加密→下载→解密、会话续聊、工具标记（块故意后到）、后台隐藏、粘贴登录态
 npm run test:live     # 19 项打线上站点：不塞任何桩，真转发 + 真 DeepSeek + 续聊 / 新会话 / 工具标记 / 后台粘贴登录态
 npm run test:all      # 全部跑一遍（test:live 单独跑，它打的是线上站点）
 npm run check:generated   # 内置默认值与内联 wasm 是否和 .env.local / vendor 一致
