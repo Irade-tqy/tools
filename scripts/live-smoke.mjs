@@ -25,7 +25,7 @@ const results = [];
 
 function check(name, cond, detail = '') {
   const note = typeof detail === 'string' ? detail : JSON.stringify(detail ?? null);
-  results.push({ name, pass: !!cond });
+  results.push({ name, pass: !!cond, detail: note });
   console.log(`${cond ? 'ok  ' : 'FAIL'}  ${name}${cond ? '' : `\n        ${String(note).slice(0, 300)}`}`);
 }
 
@@ -99,26 +99,35 @@ try {
   check('the DeepSeek tab opens', await page.isVisible('#chat-input'));
 
   // 1. a real turn, served by the resident relay
+  const turnQueuedAt = new Date();
   const first = await send(page, `请记住这个代号：${marker}。只回复：好的`);
   check('a real answer renders on the live site', first.includes('好的'), first.slice(0, 160));
   const status1 = (await page.textContent('#chat-status')) || '';
   check('the live status strip reports the upstream first token', /首字/.test(status1), status1);
 
-  // The job the page just ran is the newest finished one; read its row so the claim
-  // "a relay served it" is evidence rather than a rendered string we trust.
+  // The job the page just ran: the newest turn this run queued in the production queue. Scoping
+  // by queue and time matters — an unfiltered "newest done job" once read a synthetic row from
+  // the test queue and reported the live turn as unserved.
   const { connectDb } = await import('./lib.mjs');
   const db = await connectDb();
   let newest;
   try {
     const row = await db.query(
-      `select id, transport, status, session_id, reply_message_id, title, metrics
-         from public.deepseek_job where status = 'done' order by finished_at desc nulls last limit 1`,
+      `select id, transport, status, session_id, reply_message_id, title, metrics, error
+         from public.deepseek_job
+        where queue = 'default' and created_at >= $1
+        order by created_at desc limit 1`,
+      [turnQueuedAt],
     );
     newest = row.rows[0];
   } finally {
     await db.end().catch(() => {});
   }
-  check('the live turn was served by a relay', newest?.status === 'done' && /web$/.test(String(newest?.transport || '')), newest);
+  check(
+    'the live turn was served by a relay',
+    newest?.status === 'done' && /web$/.test(String(newest?.transport || '')),
+    newest,
+  );
   check('the live turn recorded the conversation ids', Boolean(newest?.session_id) && Boolean(newest?.reply_message_id), newest);
   check('the live turn recorded upstream timings', Number(newest?.metrics?.upstream_ttft_ms) > 0, newest?.metrics);
 
@@ -360,5 +369,11 @@ try {
 check('no page errors and no failing requests', pageErrors.length === 0 && httpErrors.length === 0, { pageErrors, httpErrors });
 
 const failed = results.filter((r) => !r.pass);
+// DeepSeek has its own bad days: it answers with 服务器暂时不可用 / backend_err and the checks
+// that need a real answer cannot pass. Say so, so a red run is never mistaken for a regression.
+const degraded = failed.filter((r) => /服务器暂时不可用|backend_err|upstream closed/i.test(`${r.name} ${r.detail || ''}`));
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
+if (degraded.length) {
+  console.log(`  ${degraded.length}/${failed.length} failures are turns that need a live DeepSeek answer, and the upstream reported it is temporarily unavailable`);
+}
 if (failed.length) process.exit(1);
