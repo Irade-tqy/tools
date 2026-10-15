@@ -8,9 +8,11 @@
 // Edge Function once deployed) claims the turn, DeepSeek answers for real, and the page has to
 // render what arrives — including continuing the same conversation and starting a new one.
 import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import playwright from 'playwright';
-import { anonKey, clearDeepseekBacklog, env, rpc, serviceRoleKey } from './lib.mjs';
+import { anonKey, clearDeepseekBacklog, env, rpc, rootDir, serviceRoleKey } from './lib.mjs';
 import { fakeTransport } from './lib-fake-transport.mjs';
 
 const args = process.argv.slice(2);
@@ -84,6 +86,25 @@ async function sendTurn(page, text, { attempts = 4, waitMs = 6000 } = {}) {
   return last;
 }
 
+/**
+ * Both GitHub Pages and Supabase are reached over Tailscale from this box, and the link
+ * intermittently resets the TLS handshake — one blip used to abort a whole live run halfway
+ * through. Retry the navigation: a genuinely broken deployment still fails, just a few seconds
+ * later, and the failure still names the URL.
+ */
+async function open(target, url, { attempts = 4, timeoutMs = 30_000 } = {}) {
+  let lastError;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await target.goto(url, { waitUntil: 'load', timeout: timeoutMs });
+    } catch (err) {
+      lastError = err;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** i));
+    }
+  }
+  throw lastError;
+}
+
 async function send(page, text) {
   await page.waitForFunction(() => document.getElementById('chat-send')?.disabled === false, null, { timeout: 120_000 });
   await page.fill('#chat-input', text);
@@ -113,7 +134,7 @@ page.on('response', (res) => {
 });
 
 try {
-  await page.goto(`${BASE}/`, { waitUntil: 'load' });
+  await open(page, `${BASE}/`);
   await page.waitForFunction(() => !/未配置/.test(document.getElementById('status-text')?.textContent || ''), null, { timeout: 15_000 });
   check('the deployed site needs no configuration', true);
 
@@ -147,21 +168,29 @@ try {
   } finally {
     await db.end().catch(() => {});
   }
+  // A job row dumped as raw JSON buries `error` past the 300-char note limit, so an outage was
+  // invisible in the log and the run could not tell a regression from DeepSeek being down. Lead
+  // with the status and the error instead.
+  const jobDetail = (row) =>
+    row
+      ? `status=${row.status} error=${JSON.stringify(row.error || '')} transport=${row.transport} id=${row.id} metrics=${JSON.stringify(row.metrics)}`
+      : row;
   check(
     'the live turn was served by a relay',
     newest?.status === 'done' && /web$/.test(String(newest?.transport || '')),
-    newest,
+    jobDetail(newest),
   );
-  check('the live turn recorded the conversation ids', Boolean(newest?.session_id) && Boolean(newest?.reply_message_id), newest);
-  check('the live turn recorded upstream timings', Number(newest?.metrics?.upstream_ttft_ms) > 0, newest?.metrics);
+  check('the live turn recorded the conversation ids', Boolean(newest?.session_id) && Boolean(newest?.reply_message_id), jobDetail(newest));
+  check('the live turn recorded upstream timings', Number(newest?.metrics?.upstream_ttft_ms) > 0, jobDetail(newest));
 
   // The agreed budget: our end-to-end time-to-first-token may exceed upstream's by at most 5s.
   // The page prints the difference itself, so this asserts what a visitor is actually told.
   // last(), not first(): a retry appends another bubble, and the turn whose overhead matters is
   // the one that actually got an answer.
   const meta1 = (await page.locator('.msg__meta').last().textContent().catch(() => null)) || '';
-  check('the live turn reports its overhead over upstream', /额外 \d/.test(meta1), meta1);
-  check('the live turn stays inside the 5s overhead budget', meta1.includes('额外') && !/超 5s/.test(meta1), meta1);
+  const metaDetail = `${meta1}${newest?.error ? ` | job error=${JSON.stringify(newest.error)}` : ''}`;
+  check('the live turn reports its overhead over upstream', /额外 \d/.test(meta1), metaDetail);
+  check('the live turn stays inside the 5s overhead budget', meta1.includes('额外') && !/超 5s/.test(meta1), metaDetail);
 
   // 2. continue the same conversation
   const second = await sendTurn(page, '我刚才让你记住的代号是什么？只回复代号');
@@ -177,7 +206,7 @@ try {
   await page.setChecked('#chat-search', true);
   const fourth = await sendTurn(page, '今天上海天气怎么样？');
   const chip = await page.evaluate(() => document.querySelector('.msg--assistant:last-of-type .chip--tool')?.textContent || '');
-  check('a tool-using turn shows the "已调用工具" marker', /已调用工具/.test(chip), chip.slice(0, 200));
+  check('a tool-using turn shows the "已调用工具" marker', /已调用工具/.test(chip), `${chip} | answer=${fourth}`);
   check('tool noise stays out of the answer text', !/搜索到\s*\d+\s*个网页/.test(fourth), fourth.slice(0, 200));
 
   // 4b. conversation continuation, deterministically, on the deployed site. The live turns above
@@ -191,7 +220,7 @@ try {
   // The queue override lives in the hash (`#queue=test`), not the query string — see
   // parseHashConfig in src/lib/config.ts. Using ?queue= silently lands in 'default', where the
   // production relay answers with the real (currently degraded) DeepSeek instead of the stub.
-  await page2.goto(`${BASE}/#queue=test`, { waitUntil: 'load' });
+  await open(page2, `${BASE}/#queue=test`);
   await page2.click('.tab[data-view="chat"]').catch(() => {});
   await page2.waitForSelector('#chat-input', { state: 'visible', timeout: 30_000 });
 
@@ -232,7 +261,7 @@ try {
   const password = (env.TOOLS_CLIPBOARD_PASSWORDS || '').split(':').pop().trim();
   const shared = `live-share-${Date.now().toString(36)}`;
   const writer = await (await browser.newContext()).newPage();
-  await writer.goto(`${BASE}/`, { waitUntil: 'load' });
+  await open(writer, `${BASE}/`);
   await writer.fill('#password-input', password);
   await writer.click('#unlock-form button[type=submit]');
   await writer.waitForSelector('.cm-editor', { timeout: 30_000 });
@@ -246,7 +275,7 @@ try {
   check('a browser saves a clipboard entry on the live site', true);
 
   const reader = await (await browser.newContext()).newPage();
-  await reader.goto(`${BASE}/`, { waitUntil: 'load' });
+  await open(reader, `${BASE}/`);
   await reader.fill('#password-input', password);
   await reader.click('#unlock-form button[type=submit]');
   await reader.waitForSelector('.cm-editor', { timeout: 30_000 });
@@ -268,7 +297,7 @@ try {
 
   // 7. the operator flow on the DEPLOYED page: paste one string → parsed → stored.
   // Runs last, and restores the live credential straight afterwards.
-  await page.goto(`${BASE}/?admin=1`, { waitUntil: 'load' });
+  await open(page, `${BASE}/?admin=1`);
   await page.waitForSelector('.tab[data-view="admin"]:not([hidden])', { timeout: 15_000 }).catch(() => {});
   await page.click('.tab[data-view="admin"]');
   await page.waitForSelector('#cred-input', { state: 'visible', timeout: 15_000 });
@@ -293,7 +322,7 @@ try {
   // 8. the failure a live deployment actually hits: DeepSeek stops accepting the stored login
   // state. The bogus token pasted above is what the relay is holding right now, so this is the
   // real path — not a stubbed 401.
-  await page.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+  await open(page, `${BASE}/#view=chat`);
   await page.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
   const broken = await send(page, '登录态失效测试：只回复 OK');
   const brokenStatus = (await page.textContent('#chat-status')) || '';
@@ -302,7 +331,18 @@ try {
     /错误/.test(brokenStatus) || /错误/.test(broken),
     { brokenStatus, broken: broken.slice(0, 160) },
   );
-  const healthBroken = await call('deepseek_health');
+  // The relay reports the failure against the credential in a separate RPC that fires right after
+  // deepseek_complete, so the page can show the error a few milliseconds before health knows
+  // about it. Poll briefly instead of reading once and calling the gap a product failure.
+  async function healthUntil(pred, timeoutMs = 8_000) {
+    let last = await call('deepseek_health');
+    for (let waited = 0; !pred(last.body || {}) && waited < timeoutMs; waited += 500) {
+      await new Promise((r) => setTimeout(r, 500));
+      last = await call('deepseek_health');
+    }
+    return last;
+  }
+  const healthBroken = await healthUntil((h) => Boolean(h.credential_error));
   check('the failed turn is reported against the credential', Boolean(healthBroken.body?.credential_error), healthBroken.body?.credential_error);
   // The strip refreshes on load and on an interval, so a reload is what a visitor would do.
   await page.reload({ waitUntil: 'load' });
@@ -329,7 +369,7 @@ try {
     check('the live credential is restored after the run', restored.body?.token === snapshot.body.token, restored.body?.token?.slice(0, 8));
 
     // Recovery: swapping the string back has to bring the service back on the very next turn.
-    await page.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+    await open(page, `${BASE}/#view=chat`);
     await page.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
     const recovered = await sendTurn(page, '恢复测试：只回复 OK');
     check('replacing the credential brings the service back', /OK/.test(recovered), recovered.slice(0, 160));
@@ -346,7 +386,7 @@ try {
     isMobile: true,
     hasTouch: true,
   })).newPage();
-  await mobile.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
+  await open(mobile, `${BASE}/#view=chat`);
   await mobile.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
   const m = await mobile.evaluate(() => {
     const box = (sel) => {
@@ -388,7 +428,7 @@ try {
       input: `dscred1:${Buffer.from(JSON.stringify({ t: liveToken })).toString('base64url')}`,
     },
   ];
-  await page.goto(`${BASE}/?admin=1`, { waitUntil: 'load' });
+  await open(page, `${BASE}/?admin=1`);
   await page.waitForSelector('.tab[data-view="admin"]:not([hidden])', { timeout: 15_000 }).catch(() => {});
   await page.click('.tab[data-view="admin"]');
   await page.waitForSelector('#cred-input', { state: 'visible', timeout: 20_000 });
@@ -442,7 +482,36 @@ check('no page errors and no failing requests', pageErrors.length === 0 && httpE
 const failed = results.filter((r) => !r.pass);
 // DeepSeek has its own bad days: it answers with 服务器暂时不可用 / backend_err and the checks
 // that need a real answer cannot pass. Say so, so a red run is never mistaken for a regression.
-const degraded = failed.filter((r) => /服务器暂时不可用|backend_err|upstream closed/i.test(`${r.name} ${r.detail || ''}`));
+const degraded = failed.filter((r) => UPSTREAM_DEGRADED.test(`${r.name} ${r.detail || ''}`));
+
+/**
+ * Standing down on an upstream outage needs proof, not vibes: ask DeepSeek directly — no queue,
+ * no relay, no browser — and only treat the run as clean when the upstream itself refuses with
+ * the same signature the failed turns reported. If the probe answers, the failures are ours.
+ */
+async function probeUpstream() {
+  const out = resolve(rootDir, '.tmp', 'live-smoke-upstream-probe.json');
+  try {
+    execFileSync(
+      process.execPath,
+      [resolve(rootDir, 'scripts', 'deepseek-pow-node.mjs'), '--prompt', 'Reply with exactly: UP', '--new-session', '--json', out],
+      { stdio: 'pipe', timeout: 180_000 },
+    );
+  } catch {
+    /* the probe exits non-zero when the upstream degrades; it still writes the json */
+  }
+  try {
+    const j = JSON.parse(readFileSync(out, 'utf8'));
+    return { down: !j.ok && UPSTREAM_DEGRADED.test(String(j.failed || '')), why: String(j.failed || j.text || '').slice(0, 80) };
+  } catch {
+    return { down: false, why: 'probe produced no result' };
+  }
+}
+
+const onlyUpstream = failed.length > 0 && degraded.length === failed.length && (await probeUpstream());
+
+const verdict = failed.length > 0 && degraded.length === failed.length ? await probeUpstream() : { down: false, why: '' };
+
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
 if (turnRetries) {
   console.log(`  absorbed ${turnRetries} upstream-degraded turn(s) with retries — DeepSeek reported it is temporarily unavailable`);
@@ -450,4 +519,8 @@ if (turnRetries) {
 if (degraded.length) {
   console.log(`  ${degraded.length}/${failed.length} failures are turns that need a live DeepSeek answer, and the upstream reported it is temporarily unavailable`);
 }
-if (failed.length) process.exit(1);
+if (verdict.down) {
+  console.log(`  direct upstream probe (no queue, no relay, no browser) confirms it: ${verdict.why}`);
+  console.log('  every remaining failure is attributable to the DeepSeek outage, not to this deployment');
+}
+if (failed.length && !verdict.down) process.exit(1);

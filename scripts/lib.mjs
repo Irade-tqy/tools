@@ -86,12 +86,27 @@ export async function rpc(fn, args, { key, token, method = 'POST', timeoutMs = 0
     Prefer: 'return=representation',
   };
   if (token) headers['x-clipboard-token'] = token;
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: method === 'GET' ? undefined : JSON.stringify(args ?? {}),
-    signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
-  });
+  // This box reaches Supabase over Tailscale's MagicDNS and the link intermittently resets the
+  // TLS handshake. A reset before the handshake completes means the request never reached
+  // PostgREST, so replaying it is safe even for a mutating RPC; without this a single blip
+  // aborts a whole live run before its first check.
+  const TRANSIENT = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENETUNREACH|ECONNREFUSED|socket hang up|fetch failed|network socket disconnected|TLS connection/i;
+  let res;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body: method === 'GET' ? undefined : JSON.stringify(args ?? {}),
+        signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+      });
+      break;
+    } catch (err) {
+      const why = `${err?.message || err} ${err?.cause?.code || err?.cause?.message || ''}`;
+      if (attempt >= 3 || !TRANSIENT.test(why)) throw err;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+    }
+  }
   const text = await res.text();
   let json;
   try {
