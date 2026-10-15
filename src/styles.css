@@ -85,6 +85,19 @@ input:focus, textarea:focus { outline: 2px solid #b0caff; outline-offset: 2px; }
 .msg__thinking summary { cursor: pointer; padding: 6px 0; }
 .msg__thinking pre { white-space: pre-wrap; font: inherit; }
 .chip { color: var(--muted); background: var(--ground); padding: 2px 7px; border-radius: 6px; font-size: 11px; }
+/* Staged attachments above the composer, and the record of what a sent turn carried. */
+.composer-files { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 6px 9px; }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 6px 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--ground); color: var(--ink); font-size: 12px; }
+.file-chip__icon { display: inline-flex; color: var(--muted); }
+.file-chip__icon svg { width: 12px; height: 12px; }
+.file-chip__name { max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-chip__state { color: var(--muted); }
+.file-chip__remove { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.file-chip__remove:hover { background: var(--hover); color: var(--ink); }
+.file-chip__remove svg { width: 10px; height: 10px; }
+.file-chip--failed { border-color: var(--blue); color: #b42318; background: #fff1f0; }
+.msg--user { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.msg--user .file-chip { margin: 0; }
 .composer-dock { position: fixed; z-index: 4; bottom: 0; left: 0; right: 0; margin: auto; width: min(100% - 40px, 790px); padding: 12px 0 max(18px, env(safe-area-inset-bottom)); background: white; }
 .chat-composer { display: flex; align-items: flex-end; gap: 5px; border: 1px solid var(--line); border-radius: 30px; background: white; padding: 8px; box-shadow: 0 6px 23px rgb(30 43 67 / 5%); }
 .chat-composer:focus-within { border-color: #b4c9f3; }
@@ -95,7 +108,8 @@ input:focus, textarea:focus { outline: 2px solid #b0caff; outline-offset: 2px; }
 .composer-menu { position: relative; }
 .composer-menu > summary { list-style: none; border-radius: 50%; }
 .composer-menu > summary::-webkit-details-marker { display: none; }
-.composer-options { position: absolute; bottom: 55px; left: -8px; width: 230px; padding: 17px; background: white; border-radius: 14px; box-shadow: 0 5px 35px rgb(30 43 67 / 15%); display: grid; gap: 16px; }
+/* The options menu now sits to the right of the send button, so the panel opens leftwards. */
+.composer-options { position: absolute; bottom: 55px; right: -8px; left: auto; width: 230px; padding: 17px; background: white; border-radius: 14px; box-shadow: 0 5px 35px rgb(30 43 67 / 15%); display: grid; gap: 16px; }
 .check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .settings-panel { width: min(100% - 48px, 760px); margin: 40px auto; padding: 30px 32px 44px; min-height: min(70dvh, 720px); border: 1px solid #bdc5d0; border-radius: 22px; }
 .settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }

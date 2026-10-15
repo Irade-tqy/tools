@@ -19,6 +19,8 @@
 //   {action:"credential_set", credential, admin_token}    paste one string → live credential
 //   {action:"credential_status", admin_token}             what the server holds (no token)
 //   {action:"health"}                                     queue + credential freshness
+//   {action:"file_status", file_ids:[…]}                  parse status of uploaded files
+//   multipart body with a `file` field                    upload one attachment, returns its id
 
 import {
   CANONICAL_PREFIX,
@@ -136,6 +138,7 @@ interface TurnRequest {
   modelType: ModelType;
   thinking: boolean;
   search: boolean;
+  fileIds?: string[];
 }
 
 async function runTurn(turn: TurnRequest): Promise<Response> {
@@ -177,6 +180,7 @@ async function runTurn(turn: TurnRequest): Promise<Response> {
             modelType: turn.modelType,
             thinking: turn.thinking,
             search: turn.search,
+            fileIds: turn.fileIds,
           },
         );
         if (result.status === 'not_claimed') {
@@ -255,6 +259,62 @@ async function credentialStatus(body: Record<string, unknown>): Promise<Response
 }
 
 // ---------------------------------------------------------------------------
+// attachments
+// ---------------------------------------------------------------------------
+
+// DeepSeek caps uploads itself; this is our own ceiling so a single request cannot make the
+// Edge Function hold hundreds of megabytes in memory before forwarding it.
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Relay one attachment to DeepSeek's upload_file endpoint and hand the id back to the browser.
+ * The browser cannot do this itself: the DeepSeek credential lives server-side, and the upload
+ * needs a PoW answer solved against the upload path. Only the id goes into the queue afterwards,
+ * so the bytes travel exactly once — browser → here → DeepSeek.
+ */
+async function uploadFile(req: Request): Promise<Response> {
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (err) {
+    return json({ ok: false, error: `bad_multipart: ${(err as Error).message}` }, 400);
+  }
+  const file = form.get('file');
+  if (!(file instanceof File) || !file.size) return json({ ok: false, error: 'no_file' }, 400);
+  if (file.size > MAX_UPLOAD_BYTES) return json({ ok: false, error: 'file_too_large', max_bytes: MAX_UPLOAD_BYTES }, 413);
+
+  const resolved = await resolveCredential();
+  if ('error' in resolved) return json({ ok: false, error: resolved.error }, 503);
+
+  try {
+    const info = await new DeepSeekWebClient(resolved.credential).uploadFile({
+      name: file.name,
+      type: file.type || 'application/octet-stream',
+      bytes: new Uint8Array(await file.arrayBuffer()),
+    });
+    return json({ ok: true, file: info });
+  } catch (err) {
+    return json({ ok: false, error: (err as Error).message }, 502);
+  }
+}
+
+/**
+ * Parse status of uploaded files. Upstream answers PENDING and parses out of band, so the UI
+ * polls this before it lets the id into a turn.
+ */
+async function fileStatus(body: Record<string, unknown>): Promise<Response> {
+  const ids = Array.isArray(body.file_ids) ? body.file_ids.filter((id): id is string => typeof id === 'string') : [];
+  if (!ids.length) return json({ ok: false, error: 'no_file_ids' }, 400);
+  const resolved = await resolveCredential();
+  if ('error' in resolved) return json({ ok: false, error: resolved.error }, 503);
+  try {
+    return json({ ok: true, files: await new DeepSeekWebClient(resolved.credential).filesStatus(ids.slice(0, 10)) });
+  } catch (err) {
+    return json({ ok: false, error: (err as Error).message }, 502);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
 
@@ -262,6 +322,9 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (req.method !== 'POST') return json({ ok: false, error: 'use POST' }, 405);
   if (!SUPABASE_URL) return json({ ok: false, error: 'SUPABASE_URL is not set' }, 500);
+
+  // An attachment arrives as multipart/form-data, not JSON, so it branches before the parse.
+  if ((req.headers.get('content-type') || '').toLowerCase().includes('multipart/form-data')) return uploadFile(req);
 
   let body: Record<string, unknown>;
   try {
@@ -273,6 +336,7 @@ async function handle(req: Request): Promise<Response> {
   const action = typeof body.action === 'string' ? body.action : '';
   if (action === 'credential_set') return credentialSet(body);
   if (action === 'credential_status') return credentialStatus(body);
+  if (action === 'file_status') return fileStatus(body);
   if (action === 'health') {
     const health = await rpc('deepseek_health');
     return json({ ...health, transport: 'edge-web', admin_enabled: Boolean(ADMIN_TOKEN) });
@@ -291,6 +355,9 @@ async function handle(req: Request): Promise<Response> {
     modelType: ['default', 'expert', 'vision'].includes(modelType) ? modelType : 'default',
     thinking: Boolean(body.thinking),
     search: Boolean(body.search),
+    fileIds: Array.isArray(body.file_ids)
+      ? (body.file_ids as unknown[]).filter((id): id is string => typeof id === 'string')
+      : undefined,
   });
 }
 

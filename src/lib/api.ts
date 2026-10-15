@@ -59,6 +59,27 @@ export interface AskInput {
   modelType?: ModelType;
   thinking?: boolean;
   search?: boolean;
+  /** ids from uploadFile(); upstream reads them as ref_file_ids */
+  fileIds?: string[];
+}
+
+/** One attachment as DeepSeek describes it. `status` is PENDING until upstream parses the file. */
+export interface UploadedFile {
+  id: string;
+  name: string;
+  size: number;
+  status: string;
+  isImage?: boolean;
+  signedPath?: string;
+}
+
+export interface UploadResult extends Envelope {
+  file?: UploadedFile;
+  max_bytes?: number;
+}
+
+export interface FileStatusResult extends Envelope {
+  files?: UploadedFile[];
 }
 
 export interface AskResult extends Envelope {
@@ -82,6 +103,7 @@ export interface JobStatus extends Envelope {
   reply_message_id?: string | null;
   title?: string | null;
   model_type?: string | null;
+  file_ids?: string[];
   chunks?: { seq: number; payload: Record<string, unknown>; created_at: string }[];
 }
 
@@ -252,6 +274,7 @@ export class ToolsApi {
       p_thinking: Boolean(input.thinking),
       p_search: Boolean(input.search),
       p_queue: this.cfg.queue || null,
+      p_file_ids: input.fileIds && input.fileIds.length ? input.fileIds : null,
     });
   }
   jobStatus(jobId: string, sinceSeq = -1) {
@@ -277,6 +300,35 @@ export class ToolsApi {
       body: JSON.stringify(body),
       signal,
     });
+  }
+
+  /**
+   * Upload one attachment. The browser cannot call DeepSeek itself — the credential is server-side
+   * and the upload needs a PoW answer bound to the upload path — so the bytes go through the Edge
+   * Function once and only the returned id is queued with the turn.
+   *
+   * No Content-Type header: setting one suppresses the generated `multipart/form-data; boundary=…`
+   * and DeepSeek answers HTTP 400 "Invalid `boundary`".
+   */
+  async uploadFile(file: File): Promise<UploadResult> {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`${this.cfg.url}/functions/v1/${this.cfg.functionName}`, {
+      method: 'POST',
+      headers: { apikey: this.cfg.anonKey, Authorization: `Bearer ${this.cfg.anonKey}` },
+      body: form,
+    });
+    const body = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as UploadResult;
+    if (!res.ok && body.ok !== false) return { ok: false, error: `HTTP ${res.status}` };
+    return body;
+  }
+
+  /** Parse status of uploaded files; upstream returns PENDING and parses out of band. */
+  async fileStatus(fileIds: string[]): Promise<FileStatusResult> {
+    const res = await this.callEdgeFunction({ action: 'file_status', file_ids: fileIds });
+    const body = (await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }))) as FileStatusResult;
+    if (!res.ok && body.ok !== false) return { ok: false, error: `HTTP ${res.status}` };
+    return body;
   }
 
   /** Hidden admin page: paste one credential string, the relay parses + verifies + stores it. */

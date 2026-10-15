@@ -22,6 +22,8 @@ export interface ChatTurn {
   at: number;
   /** Parent before this user turn, used to edit or regenerate the branch. */
   parentId?: string | null;
+  /** names of the files attached to this turn (the ids live upstream once sent) */
+  files?: string[];
 }
 
 export interface ChatSession {

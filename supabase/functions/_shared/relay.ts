@@ -51,6 +51,8 @@ export interface RelayTurn {
   modelType?: ModelType;
   thinking?: boolean;
   search?: boolean;
+  /** ids from upload_file; upstream wants them in ref_file_ids */
+  fileIds?: string[];
 }
 
 export interface RelayPayload {
@@ -247,6 +249,7 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
       p_thinking: Boolean(turn.thinking),
       p_search: Boolean(turn.search),
       p_queue: turn.queue ?? null,
+      p_file_ids: Array.isArray(turn.fileIds) && turn.fileIds.length ? turn.fileIds : null,
     });
     if (!enqueued.ok) {
       return {
@@ -288,6 +291,11 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
   const modelType = (typeof claim.model_type === 'string' ? claim.model_type : (turn.modelType ?? 'default')) as ModelType;
   const thinking = typeof claim.thinking_enabled === 'boolean' ? claim.thinking_enabled : Boolean(turn.thinking);
   const search = typeof claim.search_enabled === 'boolean' ? claim.search_enabled : Boolean(turn.search);
+  // The browser uploaded these already; the queue only carries the ids. Filter to the upstream
+  // shape so a hand-edited row cannot smuggle junk into ref_file_ids.
+  const fileIds = Array.isArray(claim.file_ids)
+    ? (claim.file_ids as unknown[]).filter((id): id is string => typeof id === 'string' && /^file-[0-9a-f-]{8,64}$/.test(id))
+    : (turn.fileIds ?? []);
 
   const sink = new ChunkSink(jobId, rpc);
   const state: WebStreamState = createWebStreamState();
@@ -327,6 +335,7 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
       modelType,
       thinking,
       search,
+      fileIds,
     });
     powMs = Date.now() - t0;
 

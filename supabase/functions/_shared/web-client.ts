@@ -17,6 +17,8 @@ import { createPowSolver, type PowChallenge, type PowSolver } from './pow.ts';
 
 export const WEB_BASE = 'https://chat.deepseek.com';
 export const COMPLETION_PATH = '/api/v0/chat/completion';
+export const UPLOAD_PATH = '/api/v0/file/upload_file';
+export const FILES_PATH = '/api/v0/file/fetch_files';
 export const CLIENT_VERSION = '2.5.0';
 
 export type ModelType = 'default' | 'expert' | 'vision';
@@ -33,11 +35,27 @@ export interface WebAskRequest {
   modelType?: ModelType;
   thinking?: boolean;
   search?: boolean;
+  /** ids from uploadFile(); upstream expects them in ref_file_ids */
+  fileIds?: string[];
 }
 
 export interface WebSession {
   id: string;
   title?: string;
+}
+
+/**
+ * One uploaded attachment. Upstream parses the file out of band — `status` walks through
+ * FileParseStatus values — so a caller should poll filesStatus() before referencing the id, the
+ * same way the web app gates its send button on parsing finishing.
+ */
+export interface WebFile {
+  id: string;
+  name: string;
+  size: number;
+  status: string;
+  isImage: boolean;
+  signedPath?: string;
 }
 
 export class DeepSeekWebError extends Error {
@@ -189,7 +207,7 @@ export class DeepSeekWebClient {
       parent_message_id: parentMessageId,
       model_type: request.modelType ?? 'default',
       prompt: request.prompt,
-      ref_file_ids: [],
+      ref_file_ids: Array.isArray(request.fileIds) ? request.fileIds.filter((id) => typeof id === 'string' && id) : [],
       thinking_enabled: Boolean(request.thinking),
       search_enabled: Boolean(request.search),
       action: null,
@@ -211,6 +229,83 @@ export class DeepSeekWebClient {
       throw new DeepSeekWebError(`completion: HTTP ${res.status} ${text.slice(0, 300)}`, res.status, undefined, text);
     }
     return res;
+  }
+
+  /** Parse an API response the same way api() does, for the non-JSON-body calls. */
+  private async envelope(path: string, res: Response): Promise<unknown> {
+    const text = await res.text().catch(() => '');
+    let json: ApiEnvelope | null = null;
+    try {
+      json = text ? (JSON.parse(text) as ApiEnvelope) : null;
+    } catch {
+      /* an HTML body means the WAF answered instead of the API */
+    }
+    if (!json && text.startsWith('<')) {
+      throw new DeepSeekWebError(`${path}: blocked by WAF (HTML response)`, res.status, undefined, text.slice(0, 400));
+    }
+    return unwrap(path, res.status, json, text);
+  }
+
+  /**
+   * Upload one attachment the way the web app does: multipart POST with the field named `file`,
+   * carrying a PoW answer bound to the upload path itself — create_pow_challenge issues a
+   * challenge per target_path, and the upload scene asks for UPLOAD_PATH, not the completion one.
+   */
+  async uploadFile(input: { name: string; type?: string; bytes: Uint8Array | ArrayBuffer }): Promise<WebFile> {
+    const bytes = input.bytes instanceof ArrayBuffer ? new Uint8Array(input.bytes) : input.bytes;
+    const { header } = await this.powHeader(UPLOAD_PATH);
+    const form = new FormData();
+    form.append('file', new Blob([bytes as BlobPart], { type: input.type || 'application/octet-stream' }), input.name);
+    // headers() pins content-type: application/json for the JSON API. Sending that on a FormData
+    // body suppresses the generated `multipart/form-data; boundary=…` and upstream answers
+    // HTTP 400 "Invalid `boundary`", so the header has to go and let fetch set it.
+    const headers = this.headers({ 'x-ds-pow-response': header });
+    delete headers['content-type'];
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.base + UPLOAD_PATH, {
+        method: 'POST',
+        headers,
+        body: form,
+      });
+    } catch (err) {
+      throw new DeepSeekWebError(`upload_file: network error: ${(err as Error).message}`, 0);
+    }
+    const data = (await this.envelope(UPLOAD_PATH, res)) as Record<string, unknown>;
+    const info = (data?.file && typeof data.file === 'object' ? data.file : data) as Record<string, unknown>;
+    const id = typeof info?.id === 'string' ? info.id : '';
+    if (!id) throw new DeepSeekWebError('upload_file: no file id in response', res.status, undefined, JSON.stringify(data).slice(0, 300));
+    return {
+      id,
+      name: input.name,
+      size: typeof info.file_size === 'number' ? info.file_size : bytes.byteLength,
+      status: typeof info.status === 'string' ? info.status : '',
+      isImage: info.is_image === true,
+      signedPath: typeof info.signed_path === 'string' ? info.signed_path : undefined,
+    };
+  }
+
+  /** Poll the out-of-band parse status of uploaded files. */
+  async filesStatus(ids: string[]): Promise<WebFile[]> {
+    const wanted = ids.filter((id) => typeof id === 'string' && id);
+    if (!wanted.length) return [];
+    const query = wanted.map((id) => `file_ids=${encodeURIComponent(id)}`).join('&');
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.base}${FILES_PATH}?${query}`, { method: 'GET', headers: this.headers() });
+    } catch (err) {
+      throw new DeepSeekWebError(`fetch_files: network error: ${(err as Error).message}`, 0);
+    }
+    const data = (await this.envelope(FILES_PATH, res)) as Record<string, unknown>;
+    const files = Array.isArray(data?.files) ? (data.files as Record<string, unknown>[]) : [];
+    return files.map((f) => ({
+      id: String(f.id ?? ''),
+      name: String(f.file_name ?? f.name ?? ''),
+      size: typeof f.file_size === 'number' ? f.file_size : 0,
+      status: typeof f.status === 'string' ? f.status : '',
+      isImage: f.is_image === true,
+      signedPath: typeof f.signed_path === 'string' ? f.signed_path : undefined,
+    }));
   }
 
   /** Cheap authenticated call used to check a freshly pasted credential. */

@@ -1,9 +1,9 @@
 import { icon } from '@fortawesome/fontawesome-svg-core';
 import {
   faArrowRight, faArrowUp, faBold, faChevronDown,
-  faCode, faColumns, faCopy, faEye, faEyeSlash, faFileExport, faFileImport,
-  faFolder, faGear, faGlobe, faImage, faItalic, faLink, faListOl, faListUl,
-  faLock, faLockOpen, faMinus, faPen, faPenToSquare, faPlus, faRotateRight,
+  faCode, faColumns, faCopy, faEllipsis, faEye, faEyeSlash, faFileExport, faFileImport,
+  faFileLines, faFolder, faGear, faGlobe, faImage, faItalic, faLink, faListOl, faListUl,
+  faLock, faLockOpen, faMinus, faPaperclip, faPen, faPenToSquare, faPlus, faRotateRight,
   faStop, faStrikethrough, faTable, faXmark,
 } from '@fortawesome/free-solid-svg-icons';
 
@@ -11,10 +11,10 @@ import {
 const icons = {
   arrowRight: faArrowRight, arrowUp: faArrowUp,
   bold: faBold, chevronDown: faChevronDown, code: faCode, columns: faColumns,
-  copy: faCopy, eye: faEye, eyeSlash: faEyeSlash, fileExport: faFileExport,
-  fileImport: faFileImport, folder: faFolder, gear: faGear, globe: faGlobe,
+  copy: faCopy, ellipsis: faEllipsis, eye: faEye, eyeSlash: faEyeSlash, fileExport: faFileExport,
+  fileImport: faFileImport, fileLines: faFileLines, folder: faFolder, gear: faGear, globe: faGlobe,
   image: faImage, italic: faItalic, link: faLink, listOl: faListOl, listUl: faListUl,
-  lock: faLock, lockOpen: faLockOpen, minus: faMinus, pen: faPen,
+  lock: faLock, lockOpen: faLockOpen, minus: faMinus, paperclip: faPaperclip, pen: faPen,
   penToSquare: faPenToSquare, plus: faPlus, rotateRight: faRotateRight,
   stop: faStop, strikethrough: faStrikethrough, table: faTable, xmark: faXmark,
 };

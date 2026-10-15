@@ -6,7 +6,7 @@
 // a polling fallback — all three feed the same reducer, which dedupes by the exact seq and
 // asks for the lowest missing one so a late chunk is never stranded.
 
-import type { ToolsApi } from '../lib/api';
+import type { ToolsApi, UploadedFile } from '../lib/api';
 import {
   applyChunk,
   applyStatus,
@@ -21,7 +21,7 @@ import {
 } from '../lib/chat-reducer';
 import { isModelType } from '../lib/config';
 import { $, copyText, on, setStatus, toast } from '../lib/dom';
-import { iconButton } from '../lib/icons';
+import { iconButton, setIcon } from '../lib/icons';
 import { applyAssistantModel, assistantNode, messageNode } from '../lib/render';
 import { readSse, SSE_DONE, type SseEvent } from '../lib/sse';
 import {
@@ -57,6 +57,9 @@ export function initChat(api: ToolsApi): ChatView {
   const modelSelect = $('chat-model') as HTMLSelectElement;
   const thinkingBox = $('chat-thinking') as HTMLInputElement;
   const searchBox = $('chat-search') as HTMLInputElement;
+  const attachButton = $('chat-attach') as HTMLButtonElement;
+  const fileInput = $('chat-file') as HTMLInputElement;
+  const filesStrip = $('chat-files');
 
   let session: ChatSession = loadSession();
   let state: ChatState | null = null;
@@ -66,6 +69,10 @@ export function initChat(api: ToolsApi): ChatView {
   let abortController: AbortController | null = null;
   let sseSeq = 0;
   let finishing = false;
+  // Attachments are staged for the next turn only: once an id is referenced, DeepSeek keeps the
+  // file on its side, so the strip is a staging area rather than part of the transcript.
+  let attachments: UploadedFile[] = [];
+  let uploading = 0;
   // The answer can finish before the job does: the last chunk carries the conversation ids,
   // and the job row carries them only once the transport has completed the job. So the poll
   // loop is gated on the *job*, never on the rendered answer.
@@ -158,6 +165,11 @@ export function initChat(api: ToolsApi): ChatView {
     for (const [index, turn] of session.turns.entries()) {
       if (turn.role === 'user') {
         const node = messageNode('user', turn.content);
+        // The ids are gone (they live upstream now), but a reload should still show what the
+        // turn carried.
+        for (const name of turn.files ?? []) {
+          node.append(fileChip({ id: name, name, size: 0, status: 'SUCCESS' }, false));
+        }
         messageActions(node, turn.content, () => editTurn(index));
         log.append(node);
         continue;
@@ -330,16 +342,100 @@ export function initChat(api: ToolsApi): ChatView {
 
   // --- actions -------------------------------------------------------------
 
+  // --- attachments -----------------------------------------------------------
+
+  const FILE_STATUS_LABEL: Record<string, string> = { UPLOADING: '上传中', PENDING: '解析中' };
+
+  function fileChip(file: UploadedFile, removable: boolean): HTMLElement {
+    const chip = document.createElement('span');
+    chip.className = `file-chip file-chip--${(file.status || 'unknown').toLowerCase()}`;
+    const glyph = document.createElement('span');
+    glyph.className = 'file-chip__icon';
+    setIcon(glyph, file.isImage ? 'image' : 'fileLines');
+    const name = document.createElement('span');
+    name.className = 'file-chip__name';
+    name.textContent = file.name;
+    chip.append(glyph, name);
+    const label = FILE_STATUS_LABEL[file.status];
+    if (label) {
+      const state = document.createElement('span');
+      state.className = 'file-chip__state';
+      state.textContent = label;
+      chip.append(state);
+    }
+    if (removable) chip.append(iconButton('xmark', `移除 ${file.name}`, () => {
+      attachments = attachments.filter((a) => a.id !== file.id);
+      renderAttachments();
+    }));
+    return chip;
+  }
+
+  function renderAttachments(): void {
+    filesStrip.replaceChildren(...attachments.map((file) => fileChip(file, true)));
+    filesStrip.hidden = attachments.length === 0;
+  }
+
+  /**
+   * Upstream answers PENDING right after an upload and parses the file out of band, so poll until
+   * it settles. 20s is generous for the formats we accept; a file still parsing after that is
+   * offered to upstream anyway rather than blocking the composer forever.
+   */
+  async function waitForParse(file: UploadedFile): Promise<void> {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!attachments.includes(file) || file.status !== 'PENDING') return;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (!attachments.includes(file)) return;
+      const res = await api.fileStatus([file.id]).catch(() => null);
+      const info = res?.files?.find((f) => f.id === file.id);
+      if (info) file.status = info.status;
+      renderAttachments();
+    }
+  }
+
+  async function uploadFiles(picked: File[]): Promise<void> {
+    for (const file of picked) {
+      const staged: UploadedFile = { id: `staged-${crypto.randomUUID()}`, name: file.name, size: file.size, status: 'UPLOADING', isImage: false };
+      attachments = [...attachments, staged];
+      uploading += 1;
+      renderAttachments();
+      try {
+        const res = await api.uploadFile(file);
+        if (!res.ok || !res.file) {
+          throw new Error(
+            res.error === 'file_too_large'
+              ? `文件超过 ${Math.round(((res.max_bytes ?? 0) / 1024 / 1024) || 0)} MB`
+              : String(res.error || '上传失败'),
+          );
+        }
+        const uploaded = res.file;
+        attachments = attachments.map((a) => (a === staged ? uploaded : a));
+        renderAttachments();
+        await waitForParse(uploaded);
+      } catch (err) {
+        staged.status = 'FAILED';
+        renderAttachments();
+        toast(`${file.name} 上传失败：${(err as Error).message}`, 'err');
+      } finally {
+        uploading -= 1;
+        renderAttachments();
+      }
+    }
+  }
+
   async function send(text: string): Promise<void> {
     const content = text.trim();
     if (!content || (state && !state.done)) return;
+    if (uploading > 0) return void toast('文件还在上传，等一下再发。', 'err');
 
     if (!api.token) return void toast('请先验证登录码。', 'err');
     const previousSession = structuredClone(session);
     const previousEditingIndex = editingIndex;
+    const previousAttachments = attachments;
     function restoreFailedSend(message: string) {
       session = previousSession;
       editingIndex = previousEditingIndex;
+      attachments = previousAttachments;
+      renderAttachments();
       state = null;
       assistant = null;
       saveSession(session);
@@ -364,11 +460,19 @@ export function initChat(api: ToolsApi): ChatView {
     }
     followOutput = true;
     log.querySelector('.chat-empty')?.remove();
+    const stagedFiles = attachments.filter((file) => file.id.startsWith('file-'));
     const userNode = messageNode('user', content);
+    if (stagedFiles.length) userNode.append(...stagedFiles.map((file) => fileChip(file, false)));
     const turnIndex = session.turns.length;
     messageActions(userNode, content, () => editTurn(turnIndex));
     log.append(userNode);
-    session.turns.push({ role: 'user', content, at: Date.now(), parentId: session.parentId });
+    session.turns.push({
+      role: 'user',
+      content,
+      at: Date.now(),
+      parentId: session.parentId,
+      files: stagedFiles.map((file) => file.name),
+    });
     renderSession();
 
     state = createChatState();
@@ -389,6 +493,7 @@ export function initChat(api: ToolsApi): ChatView {
         modelType: isModelType(modelSelect.value) ? modelSelect.value : 'default',
         thinking: thinkingBox.checked,
         search: searchBox.checked,
+        fileIds: stagedFiles.map((file) => file.id),
       });
     } catch (err) {
       restoreFailedSend(`无法入队：${(err as Error).message}`);
@@ -409,6 +514,9 @@ export function initChat(api: ToolsApi): ChatView {
     // The turn is queued against a conversation; remember which one even if the stream dies.
     if (enqueued.session_id) session.dsSessionId = enqueued.session_id;
     saveSession(session);
+    // The ids are handed over with this turn; DeepSeek keeps the file from here on.
+    attachments = [];
+    renderAttachments();
 
     state.jobId = enqueued.job_id;
     state.status = 'queued';
@@ -560,6 +668,13 @@ export function initChat(api: ToolsApi): ChatView {
 
   on(stopButton, 'click', () => void stop());
   on(newSessionButton, 'click', () => startNewSession());
+  on(attachButton, 'click', () => fileInput.click());
+  on(fileInput, 'change', () => {
+    const picked = Array.from(fileInput.files ?? []);
+    // Reset the input so picking the same file twice in a row still fires 'change'.
+    fileInput.value = '';
+    if (picked.length) void uploadFiles(picked);
+  });
 
   renderTranscript();
   renderSession();
