@@ -20,13 +20,15 @@ import {
   type ChunkPayload,
 } from '../lib/chat-reducer';
 import { isModelType } from '../lib/config';
-import { $, on, setStatus, toast } from '../lib/dom';
+import { $, copyText, on, setStatus, toast } from '../lib/dom';
+import { iconButton } from '../lib/icons';
 import { applyAssistantModel, assistantNode, messageNode } from '../lib/render';
 import { readSse, SSE_DONE, type SseEvent } from '../lib/sse';
 import {
   clearSession,
   loadSession,
   newSession,
+  parseSession,
   saveSession,
   sessionLabel,
   type ChatSession,
@@ -68,6 +70,39 @@ export function initChat(api: ToolsApi): ChatView {
   // and the job row carries them only once the transport has completed the job. So the poll
   // loop is gated on the *job*, never on the rendered answer.
   let jobFinished = false;
+  let editingIndex: number | null = null;
+  let followOutput = true;
+  window.addEventListener('scroll', () => {
+    followOutput = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 160;
+  }, { passive: true });
+
+  function scrollToBottom() {
+    if (followOutput && !$('chat-work').hidden && !$('chat-conversation').hidden) window.scrollTo(0, document.documentElement.scrollHeight);
+  }
+
+  function messageActions(node: HTMLElement, text: string, edit?: () => void, retry?: () => void) {
+    if (node.querySelector('.msg-actions')) return;
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    if (edit) actions.append(iconButton('pen', '编辑消息', edit));
+    actions.append(iconButton('copy', '复制消息', async () => {
+      toast(await copyText(text) ? '已复制' : '复制失败，请选择文本复制');
+    }));
+    if (retry) actions.append(iconButton('rotateRight', '重新生成', retry));
+    node.append(actions);
+  }
+
+  function editTurn(index: number, retry = false) {
+    if (state && !state.done) return void toast('请先停止当前回复。');
+    const turn = session.turns[index];
+    if (!turn || turn.role !== 'user') return;
+    editingIndex = index;
+    input.value = turn.content;
+    input.dispatchEvent(new Event('input'));
+    input.focus();
+    statusLine.textContent = '编辑后发送会替换这一轮及后续回复。按 Esc 取消。';
+    if (retry) form.requestSubmit();
+  }
 
   // --- rendering -----------------------------------------------------------
 
@@ -84,7 +119,7 @@ export function initChat(api: ToolsApi): ChatView {
       meta: state.done ? describeLatency(state) : '',
       error: state.error,
     });
-    log.scrollTop = log.scrollHeight;
+    scrollToBottom();
   }
 
   function renderStatus() {
@@ -112,34 +147,40 @@ export function initChat(api: ToolsApi): ChatView {
   function renderTranscript() {
     log.textContent = '';
     if (!session.turns.length) {
-      const hint = document.createElement('p');
-      hint.className = 'muted';
-      hint.textContent = '向 DeepSeek 提问。同一个会话里可以继续追问，点“新会话”会重新开始。';
+      const hint = document.createElement('div');
+      hint.className = 'chat-empty';
+      const heading = document.createElement('h1');
+      heading.textContent = '今天想聊些什么？';
+      hint.append(heading);
       log.append(hint);
       return;
     }
-    for (const turn of session.turns) {
+    for (const [index, turn] of session.turns.entries()) {
       if (turn.role === 'user') {
-        log.append(messageNode('user', turn.content));
+        const node = messageNode('user', turn.content);
+        messageActions(node, turn.content, () => editTurn(index));
+        log.append(node);
         continue;
       }
-      log.append(
-        assistantNode({
+      const node = assistantNode({
           text: turn.content,
           thinking: turn.thinking ?? '',
           tools: turn.tools ?? null,
           meta: '',
           error: null,
-        }),
-      );
+        });
+      messageActions(node, turn.content, undefined, () => editTurn(index - 1, true));
+      log.append(node);
     }
-    log.scrollTop = log.scrollHeight;
+    scrollToBottom();
   }
 
   function setBusy(busy: boolean) {
     sendButton.disabled = busy;
+    sendButton.hidden = busy;
     stopButton.hidden = !busy;
     newSessionButton.disabled = busy || !session.turns.length;
+    ($('chat-import') as HTMLButtonElement).disabled = busy;
   }
 
   function teardown() {
@@ -202,6 +243,7 @@ export function initChat(api: ToolsApi): ChatView {
     commitTurn();
     setBusy(false);
     renderAssistant();
+    if (assistant && state.text) messageActions(assistant, state.text, undefined, () => editTurn(session.turns.length - 2, true));
     renderStatus();
 
     const report = latencyOf(state);
@@ -263,8 +305,8 @@ export function initChat(api: ToolsApi): ChatView {
       await readSse(res, {
         signal: abortController.signal,
         onEvent: (event: SseEvent) => {
-          if (!state) return;
-          if (event.data === SSE_DONE) return void finish();
+          if (!state || state.jobId !== jobId) return;
+          if (event.data === SSE_DONE) return;
           let parsed: ChunkPayload & { seq?: number };
           try {
             parsed = JSON.parse(event.data) as ChunkPayload & { seq?: number };
@@ -292,10 +334,41 @@ export function initChat(api: ToolsApi): ChatView {
     const content = text.trim();
     if (!content || (state && !state.done)) return;
 
-    log.querySelectorAll('.muted').forEach((node) => node.remove());
-    log.append(messageNode('user', content));
-    session.turns.push({ role: 'user', content, at: Date.now() });
-    saveSession(session);
+    if (!api.token) return void toast('请先验证登录码。', 'err');
+    const previousSession = structuredClone(session);
+    const previousEditingIndex = editingIndex;
+    function restoreFailedSend(message: string) {
+      session = previousSession;
+      editingIndex = previousEditingIndex;
+      state = null;
+      assistant = null;
+      saveSession(session);
+      renderTranscript();
+      renderSession();
+      setBusy(false);
+      input.value = content;
+      input.dispatchEvent(new Event('input'));
+      log.append(messageNode('system', message));
+    }
+    if (editingIndex !== null) {
+      const original = session.turns[editingIndex];
+      if (original?.parentId === undefined && editingIndex > 0) {
+        session = newSession();
+        toast('旧会话缺少分支信息，已从新会话发送。');
+      } else {
+        session.parentId = original?.parentId ?? null;
+        session.turns = session.turns.slice(0, editingIndex);
+      }
+      editingIndex = null;
+      renderTranscript();
+    }
+    followOutput = true;
+    log.querySelector('.chat-empty')?.remove();
+    const userNode = messageNode('user', content);
+    const turnIndex = session.turns.length;
+    messageActions(userNode, content, () => editTurn(turnIndex));
+    log.append(userNode);
+    session.turns.push({ role: 'user', content, at: Date.now(), parentId: session.parentId });
     renderSession();
 
     state = createChatState();
@@ -318,24 +391,24 @@ export function initChat(api: ToolsApi): ChatView {
         search: searchBox.checked,
       });
     } catch (err) {
-      setBusy(false);
-      log.append(messageNode('system', `无法入队：${(err as Error).message}`));
+      restoreFailedSend(`无法入队：${(err as Error).message}`);
       return;
     }
     if (!enqueued.ok || !enqueued.job_id) {
-      setBusy(false);
       const why =
         enqueued.error === 'rate_limited'
           ? '发送太快，稍等 1 分钟'
           : enqueued.error === 'no_credentials'
             ? '服务端还没有 DeepSeek 登录态'
             : String(enqueued.error || '入队失败');
-      log.append(messageNode('system', why));
+      restoreFailedSend(why);
+      if (enqueued.error === 'unauthorized') document.dispatchEvent(new Event('tools:auth-expired'));
       return;
     }
 
     // The turn is queued against a conversation; remember which one even if the stream dies.
     if (enqueued.session_id) session.dsSessionId = enqueued.session_id;
+    saveSession(session);
 
     state.jobId = enqueued.job_id;
     state.status = 'queued';
@@ -380,10 +453,14 @@ export function initChat(api: ToolsApi): ChatView {
   }
 
   function startNewSession(): void {
+    if (state && !state.done) return void toast('请先停止当前回复。');
     teardown();
     state = null;
     assistant = null;
     session = newSession();
+    editingIndex = null;
+    input.value = '';
+    statusLine.textContent = '';
     clearSession();
     saveSession(session);
     renderTranscript();
@@ -420,16 +497,65 @@ export function initChat(api: ToolsApi): ChatView {
 
   on(form, 'submit', (event) => {
     event.preventDefault();
+    if (state && !state.done) return;
     const value = input.value;
+    if (!value.trim()) return;
     input.value = '';
+    input.dispatchEvent(new Event('input'));
     void send(value);
   });
 
   input.addEventListener('keydown', (event) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+    if (event.key === 'Escape' && editingIndex !== null) {
+      editingIndex = null;
+      input.value = '';
+      statusLine.textContent = '';
+    }
+    let mode = 'enter';
+    try { mode = localStorage.getItem('tools.chat.send-mode') || 'enter'; } catch { /* use default */ }
+    if (!event.isComposing && event.key === 'Enter' && !event.shiftKey
+      && ((event.ctrlKey || event.metaKey) || mode === 'enter')) {
       event.preventDefault();
       form.requestSubmit();
     }
+  });
+
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(210, input.scrollHeight)}px`;
+  });
+
+  const sessionFile = $('session-file') as HTMLInputElement;
+  on($('chat-import'), 'click', () => sessionFile.click());
+  on(sessionFile, 'change', async () => {
+    const file = sessionFile.files?.[0];
+    sessionFile.value = '';
+    if (!file || (state && !state.done)) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error('会话文件超过 10 MB。');
+      const imported = parseSession(await file.text());
+      if (session.turns.length && !window.confirm('读取后会替换本机当前会话，建议先导出。继续？')) return;
+      teardown();
+      state = null;
+      assistant = null;
+      session = imported;
+      editingIndex = null;
+      input.value = '';
+      statusLine.textContent = '';
+      saveSession(session);
+      renderTranscript();
+      renderSession();
+      setBusy(false);
+      toast('已读取会话', 'ok');
+    } catch (error) { toast((error as Error).message, 'err'); }
+  });
+  on($('chat-export'), 'click', () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(session, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tools-chat-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 
   on(stopButton, 'click', () => void stop());

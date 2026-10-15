@@ -4,6 +4,7 @@
 import type { EntryMeta } from './api';
 import type { ToolSummary } from './chat-reducer';
 import { humanSize, relDeadline, relTime } from './dom-helpers';
+import { renderMarkdown } from './markdown';
 
 export interface EntryHandlers {
   onCopy: (entry: EntryMeta) => void;
@@ -147,7 +148,8 @@ export function applyAssistantModel(node: HTMLElement, model: AssistantModel): v
 
   // answer
   body.className = 'msg__body';
-  body.textContent = model.text || (model.error ? '' : '…');
+  body.classList.add('markdown-body');
+  renderMarkdown(body, model.text || (model.error ? '' : '…'));
 
   // tool chip + latency / error line
   footer.textContent = '';

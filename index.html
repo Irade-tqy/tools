@@ -1,134 +1,67 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tools · 云剪贴板 / DeepSeek</title>
-    <link rel="stylesheet" href="./src/styles.css" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f6feb'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
-  </head>
-  <body>
-    <header class="topbar">
-      <h1 class="brand">Tools</h1>
-      <nav class="tabs" role="tablist">
-        <button class="tab is-active" role="tab" data-view="clipboard" aria-selected="true">云剪贴板</button>
-        <button class="tab" role="tab" data-view="chat" aria-selected="false">DeepSeek</button>
-        <!-- 后台：只有 ?admin=1 时才显示 -->
-        <button class="tab" role="tab" data-view="admin" aria-selected="false" hidden>后台</button>
-      </nav>
-      <div class="status" id="status-strip" aria-live="polite">
-        <span class="dot dot--idle" id="status-dot"></span>
-        <span id="status-text">未连接</span>
-      </div>
-    </header>
-
-    <main>
-      <!-- ------------------------------------------------------------------ -->
-      <section class="view is-active" id="view-clipboard" data-view="clipboard">
-        <div class="gate" id="clipboard-gate">
-          <form id="unlock-form" class="card gate__card">
-            <h2>共享云剪贴板</h2>
-            <p class="muted">
-              输入访问密码。密码需在服务端允许列表内；验证后获得临时令牌，
-              所有已验证的人看到同一份内容。
-            </p>
-            <label class="field">
-              <span>密码</span>
-              <input
-                id="password-input"
-                type="password"
-                autocomplete="current-password"
-                placeholder="访问密码"
-                required
-              />
-            </label>
-            <div class="row">
-              <button class="btn btn--primary" type="submit">验证</button>
-              <label class="check">
-                <input type="checkbox" id="remember-token" checked />
-                <span>记住令牌（本浏览器）</span>
-              </label>
-            </div>
-            <p class="form-error" id="unlock-error" role="alert" hidden></p>
-          </form>
-        </div>
-
-        <div class="work" id="clipboard-work" hidden>
-          <div class="work__editor">
-            <div class="editor-head">
-              <input id="entry-title" class="title-input" placeholder="标题（可选）" maxlength="200" />
-              <span class="muted" id="editor-hint"></span>
-            </div>
-            <div id="editor" class="editor"></div>
-            <div class="row row--end">
-              <button class="btn" id="copy-all" type="button">复制最新</button>
-              <button class="btn" id="upload-file" type="button">上传文件</button>
-              <input type="file" id="file-input" hidden multiple />
-              <button class="btn btn--primary" id="save-text" type="button">保存文本</button>
-            </div>
-          </div>
-
-          <div class="work__list">
-            <div class="list-head">
-              <h3>共享内容</h3>
-              <div class="row row--tight">
-                <button class="btn btn--ghost btn--sm" id="refresh-list" type="button">刷新</button>
-                <button class="btn btn--ghost btn--sm btn--danger" id="clear-all" type="button">清空</button>
-              </div>
-            </div>
-            <p class="muted" id="list-meta"></p>
-            <ul class="entries" id="entry-list"></ul>
-          </div>
-        </div>
-      </section>
-
-      <!-- ------------------------------------------------------------------ -->
-      <section class="view" id="view-chat" data-view="chat">
-        <div class="chat">
-          <div class="chat__session">
-            <span id="chat-session" class="muted"></span>
-            <button class="btn btn--ghost btn--sm" id="chat-new-session" type="button">新会话</button>
-          </div>
-
-          <div class="chat__log" id="chat-log" aria-live="polite"></div>
-
-          <form class="chat__composer" id="chat-form">
-            <textarea
-              id="chat-input"
-              rows="3"
-              placeholder="向 DeepSeek 提问…（Ctrl/Cmd + Enter 发送）"
-            ></textarea>
-            <div class="row row--between">
-              <div class="row row--tight chat__options">
-                <label class="field field--inline">
-                  <span>模型</span>
-                  <select id="chat-model">
-                    <option value="default">默认</option>
-                    <option value="expert">专家</option>
-                    <option value="vision">视觉</option>
-                  </select>
-                </label>
-                <label class="check">
-                  <input type="checkbox" id="chat-thinking" />
-                  <span>深度思考</span>
-                </label>
-                <label class="check">
-                  <input type="checkbox" id="chat-search" />
-                  <span>联网搜索</span>
-                </label>
-              </div>
-              <div class="row row--tight">
-                <button class="btn" id="chat-stop" type="button" hidden>停止</button>
-                <button class="btn btn--primary" id="chat-send" type="submit">发送</button>
-              </div>
-            </div>
-            <p class="muted" id="chat-status"></p>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f3f4f6" />
+  <title>Tools · Chat</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230c5bff'/%3E%3Cpath d='M9 10h14M9 16h14M9 22h9' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <main id="app">
+    <section id="view-chat" hidden>
+      <section class="login-screen" id="chat-gate" aria-label="聊天登录">
+        <div class="login-content">
+          <h1 class="wordmark"><span>IRADE</span><span>TOOLS</span></h1>
+          <div class="login-rule"></div><p class="login-caption">chat</p>
+          <form id="chat-login" class="password-form">
+            <div class="password-field"><input id="chat-password" type="password" placeholder="输入登录码" aria-label="登录码" autocomplete="current-password" required /><button class="icon-button" type="button" data-reveal="chat-password" aria-label="显示密码" data-icon="eye"></button></div>
+            <button class="icon-button action-circle primary" type="submit" aria-label="登录" data-icon="arrowRight"></button>
+            <button class="icon-button action-circle secondary" id="login-upload" type="button" aria-label="从文件读取登录码" data-icon="fileImport"></button>
+            <input type="file" id="login-file" accept=".txt,.json,.key,text/plain,application/json" hidden />
+            <p id="chat-login-error" class="form-error" role="alert" hidden></p>
           </form>
         </div>
       </section>
-
-      <!-- ------------------------------------------------------------------ -->
-      <!-- 后台：线上默认不显示，?admin=1 才出现 -->
+      <div class="chat-screen" id="chat-work" hidden>
+        <header class="chat-header">
+          <div class="app-mark"><span>TOOLS</span><span class="app-section">chat</span></div>
+          <nav class="chat-actions" aria-label="会话操作">
+            <button class="icon-button" id="chat-settings" type="button" aria-label="设置" title="设置" data-icon="gear"></button>
+            <button class="icon-button" id="chat-import" type="button" aria-label="读取会话" title="读取会话" data-icon="folder"></button>
+            <button class="icon-button" id="chat-export" type="button" aria-label="导出当前会话" title="导出当前会话" data-icon="fileExport"></button>
+            <button class="icon-button" id="chat-new-session" type="button" aria-label="新会话" title="新会话" data-icon="penToSquare"></button>
+          </nav>
+          <input id="session-file" type="file" accept=".json,application/json" hidden />
+        </header>
+        <section id="chat-conversation" class="chat-conversation" aria-label="当前会话">
+          <span id="chat-session" class="sr-only"></span>
+          <div class="chat-log" id="chat-log" aria-live="polite" aria-relevant="additions text"></div>
+          <div class="composer-dock">
+            <form class="chat-composer" id="chat-form">
+              <details class="composer-menu"><summary class="icon-button" aria-label="对话选项" title="对话选项"><span data-icon="plus"></span></summary>
+                <div class="composer-options">
+                  <label class="field">模型<select id="chat-model"><option value="default">默认</option><option value="expert">专家</option><option value="vision">视觉</option></select></label>
+                  <label class="check"><input type="checkbox" id="chat-thinking" />深度思考</label>
+                  <label class="check"><input type="checkbox" id="chat-search" />联网搜索</label>
+                </div>
+              </details>
+              <textarea id="chat-input" rows="1" placeholder="发送消息…" aria-label="消息"></textarea>
+              <button class="icon-button action-circle primary" id="chat-send" type="submit" aria-label="发送消息" data-icon="arrowUp"></button>
+              <button class="icon-button action-circle primary" id="chat-stop" type="button" aria-label="停止生成" data-icon="stop" hidden></button>
+            </form>
+            <p class="chat-status" id="chat-status" role="status"></p>
+          </div>
+        </section>
+        <section id="chat-settings-panel" class="settings-panel" aria-label="设置" hidden>
+          <div class="settings-heading"><h1>设置</h1><button class="icon-button" id="settings-close" type="button" aria-label="返回聊天" data-icon="xmark"></button></div>
+          <h2>常规</h2>
+          <div class="settings-row"><label for="send-mode">发送方式</label><select id="send-mode"><option value="enter">Enter</option><option value="modifier">Ctrl / ⌘ + Enter</option></select></div>
+          <h2>登录码</h2>
+          <form id="change-login" class="settings-row"><label for="settings-password">切换登录码</label><div class="password-form"><div class="password-field"><input id="settings-password" type="password" placeholder="新的登录码" aria-label="新的登录码" autocomplete="current-password" required /><button class="icon-button" type="button" data-reveal="settings-password" aria-label="显示密码" data-icon="eye"></button></div><button class="icon-button action-circle secondary" type="submit" aria-label="验证并切换登录码" data-icon="arrowRight"></button></div><p class="form-error" id="settings-login-error" role="alert" hidden></p></form>
+          <div class="connection-status" id="status-strip" role="status"><span class="dot" id="status-dot"></span><span id="status-text">连接中…</span></div>
+          <details id="admin-settings" hidden><summary>管理设置</summary>
       <section class="view" id="view-admin" data-view="admin" hidden>
         <div class="settings">
           <div class="card">
@@ -211,9 +144,39 @@
           </form>
         </div>
       </section>
-    </main>
-
-    <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./src/main.ts"></script>
-  </body>
+          </details>
+        </section>
+      </div>
+    </section>
+    <section id="view-clipboard" class="paste-screen" hidden>
+      <div class="markdown-editor" id="paste-editor" data-mode="split">
+        <div class="editor-toolbar" role="toolbar" aria-label="Markdown 编辑工具">
+          <div class="format-tools" id="format-tools"></div>
+          <div class="document-tools">
+            <input id="paste-name" class="paste-name" aria-label="剪贴板名称" spellcheck="false" autocomplete="off" readonly />
+            <button class="icon-button" id="paste-permission" type="button" aria-label="权限" data-icon="globe"></button>
+            <button class="icon-button" id="paste-link" type="button" aria-label="复制剪贴板链接" title="复制链接" data-icon="link"></button>
+            <button class="icon-button" id="paste-copy" type="button" aria-label="复制 Markdown 源码" title="复制 Markdown 源码" data-icon="copy"></button>
+          </div>
+        </div>
+        <div class="editor-ground" id="paste-ground">
+          <div class="editor-pane" id="editor-pane"><div id="editor" class="editor-host"></div><div class="editor-status"><span id="editor-position">第 1 行，第 1 列</span><span id="editor-count">0 字 / 共 0 字</span></div></div>
+          <div id="editor-divider" class="editor-divider" role="separator" tabindex="0" aria-label="调整编辑与预览宽度" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+          <article class="markdown-body editor-preview" id="editor-preview" aria-label="Markdown 预览"></article>
+        </div>
+        <section class="paste-gate" id="paste-gate" aria-label="剪贴板验证">
+          <div class="gate-content"><h1 id="paste-gate-title">BLOCKED</h1><p id="paste-gate-caption">输入密码以查看 / 编辑</p>
+            <form id="paste-unlock" class="password-form"><div class="password-field"><input id="paste-password" type="password" aria-label="剪贴板密码" placeholder="输入密码" autocomplete="current-password" required /><button class="icon-button" type="button" data-reveal="paste-password" aria-label="显示密码" data-icon="eye"></button></div><button class="icon-button action-circle primary" id="paste-verify" type="submit" aria-label="验证密码" data-icon="arrowRight"></button></form>
+            <p id="paste-saved-password" class="gate-note" hidden>自动使用已保存密码</p><button class="btn" type="button" id="paste-view-only" hidden>仅查看</button><p id="paste-error" class="form-error" role="alert" hidden></p>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <dialog id="insert-dialog" class="insert-dialog" aria-labelledby="insert-title">
+    <form id="insert-form"><div class="settings-heading"><h2 id="insert-title">插入</h2><button class="icon-button" type="button" id="insert-close" aria-label="关闭" data-icon="xmark"></button></div><div id="insert-fields"></div><p id="insert-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button class="btn" type="button" id="insert-cancel">取消</button><button class="btn btn--primary" type="submit">插入</button></div></form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
 </html>

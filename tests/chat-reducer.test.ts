@@ -32,6 +32,25 @@ const tool = (overrides: Partial<ToolPayload> = {}): ToolPayload => ({
 });
 
 describe('applyChunk', () => {
+  it.each([false, true])('ignores a losing relay claim without consuming an answer sequence (text first: %s)', (textFirst) => {
+    const state = createChatState(1000);
+    if (textFirst) applyChunk(state, 0, { text: 'Hello ' }, 1100);
+    applyChunk(state, 0, { _transport: 'edge-web', error: 'not_claimed: not_available' }, 1200);
+    expect(state.error).toBeNull();
+    expect(state.done).toBe(false);
+    if (!textFirst) {
+      expect(state.nextSeq).toBe(0);
+      expect(state.seen.size).toBe(0);
+      applyChunk(state, 0, { text: 'Hello ' }, 1300);
+    }
+    applyChunk(state, 1, { text: 'world' }, 1400);
+    applyChunk(state, 2, { done: true, ok: true, session_id: 'session', reply_message_id: 42 }, 1500);
+    expect(state.text).toBe('Hello world');
+    expect(state.error).toBeNull();
+    expect(state.done).toBe(true);
+    expect(state.replyMessageId).toBe('42');
+  });
+
   it('concatenates answer deltas and stamps the first token', () => {
     const state = createChatState(1000);
     applyChunk(state, 0, { text: '你' }, 1100);

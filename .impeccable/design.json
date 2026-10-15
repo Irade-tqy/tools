@@ -1,0 +1,380 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-15T05:42:28.094Z",
+  "title": "Design System: Tools",
+  "extensions": {
+    "colorMeta": {
+      "blue": {
+        "role": "primary",
+        "displayName": "Saturated blue",
+        "tonalRamp": [
+          "oklch(15% 0.25224 262.63)",
+          "oklch(26.43% 0.25224 262.63)",
+          "oklch(37.86% 0.25224 262.63)",
+          "oklch(49.29% 0.25224 262.63)",
+          "oklch(60.71% 0.25224 262.63)",
+          "oklch(72.14% 0.25224 262.63)",
+          "oklch(83.57% 0.25224 262.63)",
+          "oklch(95% 0.25224 262.63)"
+        ]
+      },
+      "blue-soft": {
+        "role": "primary",
+        "displayName": "Soft message blue",
+        "tonalRamp": [
+          "oklch(15% 0.01888 248.02)",
+          "oklch(26.43% 0.01888 248.02)",
+          "oklch(37.86% 0.01888 248.02)",
+          "oklch(49.29% 0.01888 248.02)",
+          "oklch(60.71% 0.01888 248.02)",
+          "oklch(72.14% 0.01888 248.02)",
+          "oklch(83.57% 0.01888 248.02)",
+          "oklch(95% 0.01888 248.02)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15% 0.02026 260.62)",
+          "oklch(26.43% 0.02026 260.62)",
+          "oklch(37.86% 0.02026 260.62)",
+          "oklch(49.29% 0.02026 260.62)",
+          "oklch(60.71% 0.02026 260.62)",
+          "oklch(72.14% 0.02026 260.62)",
+          "oklch(83.57% 0.02026 260.62)",
+          "oklch(95% 0.02026 260.62)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted slate",
+        "tonalRamp": [
+          "oklch(15% 0.03262 261.39)",
+          "oklch(26.43% 0.03262 261.39)",
+          "oklch(37.86% 0.03262 261.39)",
+          "oklch(49.29% 0.03262 261.39)",
+          "oklch(60.71% 0.03262 261.39)",
+          "oklch(72.14% 0.03262 261.39)",
+          "oklch(83.57% 0.03262 261.39)",
+          "oklch(95% 0.03262 261.39)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line gray",
+        "tonalRamp": [
+          "oklch(15% 0.00922 258.34)",
+          "oklch(26.43% 0.00922 258.34)",
+          "oklch(37.86% 0.00922 258.34)",
+          "oklch(49.29% 0.00922 258.34)",
+          "oklch(60.71% 0.00922 258.34)",
+          "oklch(72.14% 0.00922 258.34)",
+          "oklch(83.57% 0.00922 258.34)",
+          "oklch(95% 0.00922 258.34)"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Ground gray",
+        "tonalRamp": [
+          "oklch(15% 0.00287 264.54)",
+          "oklch(26.43% 0.00287 264.54)",
+          "oklch(37.86% 0.00287 264.54)",
+          "oklch(49.29% 0.00287 264.54)",
+          "oklch(60.71% 0.00287 264.54)",
+          "oklch(72.14% 0.00287 264.54)",
+          "oklch(83.57% 0.00287 264.54)",
+          "oklch(95% 0.00287 264.54)"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover gray",
+        "tonalRamp": [
+          "oklch(15% 0.00626 255.48)",
+          "oklch(26.43% 0.00626 255.48)",
+          "oklch(37.86% 0.00626 255.48)",
+          "oklch(49.29% 0.00626 255.48)",
+          "oklch(60.71% 0.00626 255.48)",
+          "oklch(72.14% 0.00626 255.48)",
+          "oklch(83.57% 0.00626 255.48)",
+          "oklch(95% 0.00626 255.48)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White",
+        "tonalRamp": [
+          "oklch(15% 0.00000 89.88)",
+          "oklch(26.43% 0.00000 89.88)",
+          "oklch(37.86% 0.00000 89.88)",
+          "oklch(49.29% 0.00000 89.88)",
+          "oklch(60.71% 0.00000 89.88)",
+          "oklch(72.14% 0.00000 89.88)",
+          "oklch(83.57% 0.00000 89.88)",
+          "oklch(95% 0.00000 89.88)"
+        ]
+      },
+      "blue-hover": {
+        "role": "primary",
+        "displayName": "Action hover blue",
+        "tonalRamp": [
+          "oklch(15% 0.23765 262.49)",
+          "oklch(26.43% 0.23765 262.49)",
+          "oklch(37.86% 0.23765 262.49)",
+          "oklch(49.29% 0.23765 262.49)",
+          "oklch(60.71% 0.23765 262.49)",
+          "oklch(72.14% 0.23765 262.49)",
+          "oklch(83.57% 0.23765 262.49)",
+          "oklch(95% 0.23765 262.49)"
+        ]
+      },
+      "blue-disabled": {
+        "role": "primary",
+        "displayName": "Disabled action blue",
+        "tonalRamp": [
+          "oklch(15% 0.10448 265.47)",
+          "oklch(26.43% 0.10448 265.47)",
+          "oklch(37.86% 0.10448 265.47)",
+          "oklch(49.29% 0.10448 265.47)",
+          "oklch(60.71% 0.10448 265.47)",
+          "oklch(72.14% 0.10448 265.47)",
+          "oklch(83.57% 0.10448 265.47)",
+          "oklch(95% 0.10448 265.47)"
+        ]
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Secondary slate",
+        "tonalRamp": [
+          "oklch(15% 0.02279 259.19)",
+          "oklch(26.43% 0.02279 259.19)",
+          "oklch(37.86% 0.02279 259.19)",
+          "oklch(49.29% 0.02279 259.19)",
+          "oklch(60.71% 0.02279 259.19)",
+          "oklch(72.14% 0.02279 259.19)",
+          "oklch(83.57% 0.02279 259.19)",
+          "oklch(95% 0.02279 259.19)"
+        ]
+      },
+      "secondary-hover": {
+        "role": "neutral",
+        "displayName": "Secondary hover slate",
+        "tonalRamp": [
+          "oklch(15% 0.02937 257.06)",
+          "oklch(26.43% 0.02937 257.06)",
+          "oklch(37.86% 0.02937 257.06)",
+          "oklch(49.29% 0.02937 257.06)",
+          "oklch(60.71% 0.02937 257.06)",
+          "oklch(72.14% 0.02937 257.06)",
+          "oklch(83.57% 0.02937 257.06)",
+          "oklch(95% 0.02937 257.06)"
+        ]
+      },
+      "error": {
+        "role": "error",
+        "displayName": "Error red",
+        "tonalRamp": [
+          "oklch(15% 0.17570 18.89)",
+          "oklch(26.43% 0.17570 18.89)",
+          "oklch(37.86% 0.17570 18.89)",
+          "oklch(49.29% 0.17570 18.89)",
+          "oklch(60.71% 0.17570 18.89)",
+          "oklch(72.14% 0.17570 18.89)",
+          "oklch(83.57% 0.17570 18.89)",
+          "oklch(95% 0.17570 18.89)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Login wordmark",
+        "purpose": "Italic staggered login heading."
+      },
+      "headline": {
+        "displayName": "Chat empty-state heading",
+        "purpose": "Centered introductory chat heading."
+      },
+      "title": {
+        "displayName": "Settings title",
+        "purpose": "Main settings heading."
+      },
+      "body": {
+        "displayName": "Interface body",
+        "purpose": "System UI text with Chinese fallbacks."
+      },
+      "label": {
+        "displayName": "Form label",
+        "purpose": "Compact labels and controls."
+      },
+      "editor": {
+        "displayName": "Source editor",
+        "purpose": "Monospace source text."
+      }
+    },
+    "shadows": [
+      {
+        "name": "composer",
+        "value": "0 6px 23px rgb(30 43 67 / 5%)",
+        "purpose": "Subtle separation for the fixed chat composer."
+      },
+      {
+        "name": "composer-menu",
+        "value": "0 5px 35px rgb(30 43 67 / 15%)",
+        "purpose": "Floating composer options."
+      },
+      {
+        "name": "insert-dialog",
+        "value": "0 12px 65px rgb(25 40 65 / 18%)",
+        "purpose": "Raised insertion dialog."
+      },
+      {
+        "name": "toast",
+        "value": "0 4px 18px rgb(20 30 45 / 12%)",
+        "purpose": "Transient status toast."
+      }
+    ],
+    "motion": [
+      {
+        "name": "icon-state",
+        "value": "color .18s, background-color .18s, transform .5s cubic-bezier(.16,1,.3,1)",
+        "purpose": "Icon hover color and press response."
+      },
+      {
+        "name": "icon-press",
+        "value": "scale(.94)",
+        "purpose": "Enabled icon active state."
+      },
+      {
+        "name": "divider",
+        "value": "transform .5s cubic-bezier(.16,1,.3,1), background-color .3s",
+        "purpose": "Divider expands to scaleX(3) and turns blue on hover or drag."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transition-duration: 0.01ms !important; scroll-behavior: auto !important",
+        "purpose": "Applied to all elements and pseudo-elements under prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "toolbar-wrap",
+        "value": "1000px"
+      },
+      {
+        "name": "mobile",
+        "value": "700px"
+      },
+      {
+        "name": "editor-pane-container-max",
+        "value": "300px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Text button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Ordinary text action; no separate hover fill is defined in the source.",
+      "html": "<button class=\"ds-button\" type=\"button\">取消</button>",
+      "css": ".ds-button{font:inherit;font-size:13px;padding:9px 16px;border:0;border-radius:var(--radius);background:var(--ground);color:var(--ink);cursor:pointer}.ds-button:disabled{opacity:.5;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}"
+    },
+    {
+      "name": "Primary text button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary form submission.",
+      "html": "<button class=\"ds-button ds-primary-text\" type=\"button\">插入</button>",
+      "css": ".ds-button{font:inherit;font-size:13px;padding:9px 16px;border:0;border-radius:var(--radius);background:var(--ground);color:var(--ink);cursor:pointer}.ds-button:disabled{opacity:.5;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.ds-primary-text{background:var(--blue);color:white}"
+    },
+    {
+      "name": "Icon button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Font Awesome gear with no resting border or fill.",
+      "html": "<button class=\"ds-icon\" type=\"button\" aria-label=\"设置\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M195.1 9.5C198.1-5.3 211.2-16 226.4-16l59.8 0c15.2 0 28.3 10.7 31.3 25.5L332 79.5c14.1 6 27.3 13.7 39.3 22.8l67.8-22.5c14.4-4.8 30.2 1.2 37.8 14.4l29.9 51.8c7.6 13.2 4.9 29.8-6.5 39.9L447 233.3c.9 7.4 1.3 15 1.3 22.7s-.5 15.3-1.3 22.7l53.4 47.5c11.4 10.1 14 26.8 6.5 39.9l-29.9 51.8c-7.6 13.1-23.4 19.2-37.8 14.4l-67.8-22.5c-12.1 9.1-25.3 16.7-39.3 22.8l-14.4 69.9c-3.1 14.9-16.2 25.5-31.3 25.5l-59.8 0c-15.2 0-28.3-10.7-31.3-25.5l-14.4-69.9c-14.1-6-27.2-13.7-39.3-22.8L73.5 432.3c-14.4 4.8-30.2-1.2-37.8-14.4L5.8 366.1c-7.6-13.2-4.9-29.8 6.5-39.9l53.4-47.5c-.9-7.4-1.3-15-1.3-22.7s.5-15.3 1.3-22.7L12.3 185.8c-11.4-10.1-14-26.8-6.5-39.9L35.7 94.1c7.6-13.2 23.4-19.2 37.8-14.4l67.8 22.5c12.1-9.1 25.3-16.7 39.3-22.8L195.1 9.5zM256.3 336a80 80 0 1 0 -.6-160 80 80 0 1 0 .6 160z\"></path></svg></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:var(--radius);background:transparent;color:var(--muted);cursor:pointer;transition:color .18s,background-color .18s,transform .5s cubic-bezier(.16,1,.3,1)}.ds-icon svg{width:100%;height:100%;max-width:21px;max-height:21px}.ds-icon:hover:not(:disabled){background:var(--hover);color:var(--ink)}.ds-icon:active:not(:disabled){transform:scale(.94)}.ds-icon:disabled{color:#a5aebc;opacity:.7;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}"
+    },
+    {
+      "name": "Primary circle",
+      "kind": "button",
+      "refersTo": "action-primary",
+      "description": "Emphasized circular password or send action.",
+      "html": "<button class=\"ds-icon ds-circle ds-primary\" type=\"button\" aria-label=\"登录\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M502.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 224 32 224c-17.7 0-32 14.3-32 32s14.3 32 32 32l370.7 0-105.4 105.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160z\"></path></svg></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:var(--radius);background:transparent;color:var(--muted);cursor:pointer;transition:color .18s,background-color .18s,transform .5s cubic-bezier(.16,1,.3,1)}.ds-icon svg{width:100%;height:100%;max-width:21px;max-height:21px}.ds-icon:hover:not(:disabled){background:var(--hover);color:var(--ink)}.ds-icon:active:not(:disabled){transform:scale(.94)}.ds-icon:disabled{color:#a5aebc;opacity:.7;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.ds-circle{width:52px;height:52px;padding:15px;border-radius:50%}@media(max-width:700px){.ds-circle{width:46px;height:46px;padding:13px}}.ds-primary{background:var(--blue);color:white}.ds-primary:hover:not(:disabled){background:#004de5;color:white}.ds-primary:disabled{background:#9bbaff;color:white}"
+    },
+    {
+      "name": "Secondary circle",
+      "kind": "button",
+      "refersTo": "action-secondary",
+      "description": "Slate circular secondary password action.",
+      "html": "<button class=\"ds-icon ds-circle ds-secondary\" type=\"button\" aria-label=\"验证并切换登录码\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M502.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 224 32 224c-17.7 0-32 14.3-32 32s14.3 32 32 32l370.7 0-105.4 105.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160z\"></path></svg></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:var(--radius);background:transparent;color:var(--muted);cursor:pointer;transition:color .18s,background-color .18s,transform .5s cubic-bezier(.16,1,.3,1)}.ds-icon svg{width:100%;height:100%;max-width:21px;max-height:21px}.ds-icon:hover:not(:disabled){background:var(--hover);color:var(--ink)}.ds-icon:active:not(:disabled){transform:scale(.94)}.ds-icon:disabled{color:#a5aebc;opacity:.7;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.ds-circle{width:52px;height:52px;padding:15px;border-radius:50%}@media(max-width:700px){.ds-circle{width:46px;height:46px;padding:13px}}.ds-secondary{background:#9ba4b2;color:white}.ds-secondary:hover:not(:disabled){background:#7a8697;color:white}"
+    },
+    {
+      "name": "Password field",
+      "kind": "input",
+      "refersTo": "password-input",
+      "description": "White pill password input; reveal control omitted from this primitive preview.",
+      "html": "<input class=\"ds-password\" type=\"password\" aria-label=\"密码\" placeholder=\"输入密码\" autocomplete=\"current-password\" />",
+      "css": ".ds-password{font:inherit;color:var(--ink);width:100%;height:52px;padding:0 51px 0 22px;border:1px solid var(--line);border-radius:32px;background:white}.ds-password::placeholder{color:var(--muted)}.ds-password:focus{outline:2px solid #b0caff;outline-offset:2px}@media(max-width:700px){.ds-password{height:46px;padding-left:17px;font-size:14px}}"
+    },
+    {
+      "name": "Header navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Compact header treatment with a representative settings action.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"会话操作\"><a href=\"#chat\">TOOLS<span class=\"ds-section\">chat</span></a><button class=\"ds-icon\" type=\"button\" aria-label=\"设置\"><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 512 512\" aria-hidden=\"true\" focusable=\"false\"><path fill=\"currentColor\" d=\"M195.1 9.5C198.1-5.3 211.2-16 226.4-16l59.8 0c15.2 0 28.3 10.7 31.3 25.5L332 79.5c14.1 6 27.3 13.7 39.3 22.8l67.8-22.5c14.4-4.8 30.2 1.2 37.8 14.4l29.9 51.8c7.6 13.2 4.9 29.8-6.5 39.9L447 233.3c.9 7.4 1.3 15 1.3 22.7s-.5 15.3-1.3 22.7l53.4 47.5c11.4 10.1 14 26.8 6.5 39.9l-29.9 51.8c-7.6 13.1-23.4 19.2-37.8 14.4l-67.8-22.5c-12.1 9.1-25.3 16.7-39.3 22.8l-14.4 69.9c-3.1 14.9-16.2 25.5-31.3 25.5l-59.8 0c-15.2 0-28.3-10.7-31.3-25.5l-14.4-69.9c-14.1-6-27.2-13.7-39.3-22.8L73.5 432.3c-14.4 4.8-30.2-1.2-37.8-14.4L5.8 366.1c-7.6-13.2-4.9-29.8 6.5-39.9l53.4-47.5c-.9-7.4-1.3-15-1.3-22.7s.5-15.3 1.3-22.7L12.3 185.8c-11.4-10.1-14-26.8-6.5-39.9L35.7 94.1c7.6-13.2 23.4-19.2 37.8-14.4l67.8 22.5c12.1-9.1 25.3-16.7 39.3-22.8L195.1 9.5zM256.3 336a80 80 0 1 0 -.6-160 80 80 0 1 0 .6 160z\"></path></svg></button></nav>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;padding:10px;border:0;border-radius:var(--radius);background:transparent;color:var(--muted);cursor:pointer;transition:color .18s,background-color .18s,transform .5s cubic-bezier(.16,1,.3,1)}.ds-icon svg{width:100%;height:100%;max-width:21px;max-height:21px}.ds-icon:hover:not(:disabled){background:var(--hover);color:var(--ink)}.ds-icon:active:not(:disabled){transform:scale(.94)}.ds-icon:disabled{color:#a5aebc;opacity:.7;cursor:default}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}.ds-nav{height:76px;padding:14px 23px;display:flex;align-items:center;justify-content:space-between}.ds-nav a{display:flex;gap:10px;align-items:center;color:var(--blue);font-size:16px;font-weight:850;font-style:italic;letter-spacing:-.03em;text-decoration:none}.ds-section{padding-left:10px;border-left:1px solid var(--line);color:var(--muted);font-size:14px;font-weight:400;font-style:normal;letter-spacing:normal}.ds-nav .ds-icon{width:42px;height:42px;color:#4b5563}@media(max-width:700px){.ds-nav{height:64px;padding:10px 13px}.ds-nav .ds-icon{width:38px;height:40px}.ds-section{display:none}}"
+    },
+    {
+      "name": "Metadata chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Compact noninteractive conversation metadata.",
+      "html": "<span class=\"ds-chip\">深度思考</span>",
+      "css": ".ds-chip{color:var(--muted);background:var(--ground);padding:2px 7px;border-radius:6px;font-size:11px}"
+    },
+    {
+      "name": "Settings group",
+      "kind": "card",
+      "refersTo": "settings-row",
+      "description": "Thin bordered settings container; source card wrapper itself has only spacing.",
+      "html": "<div class=\"ds-settings-row\"><span>发送方式</span><span>Enter</span></div>",
+      "css": ".ds-settings-row{color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:18px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}@media(max-width:700px){.ds-settings-row{padding:15px}}"
+    },
+    {
+      "name": "Editor separator",
+      "kind": "custom",
+      "description": "Resizable pane boundary; preview shows CSS states only and does not implement dragging.",
+      "html": "<div class=\"ds-divider\" role=\"separator\" tabindex=\"0\" aria-label=\"调整编辑与预览宽度\" aria-orientation=\"vertical\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"50\"></div>",
+      "css": ".ds-divider{position:relative;width:1px;height:160px;flex-shrink:0;background:var(--line);cursor:col-resize;touch-action:none;z-index:2}.ds-divider::after{position:absolute;content:\"\";width:9px;left:-4px;top:0;bottom:0;background:transparent}.ds-divider::before{position:absolute;content:\"\";width:1px;top:0;bottom:0;background:var(--line);transition:transform .5s cubic-bezier(.16,1,.3,1),background-color .3s}.ds-divider:hover::before{transform:scaleX(3);background:var(--blue)}.ds-icon:focus-visible,.ds-button:focus-visible,.ds-nav a:focus-visible,.ds-nav button:focus-visible,.ds-divider:focus-visible{outline:2px solid var(--blue);outline-offset:3px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Quiet shared writing surface",
+    "overview": "Saturated blue actions sit on white work areas, with pale gray gates and slate secondary text. The supplied references establish this direction. The interface gives most space to writing, previewing, and conversation; toolbar icons remain visually light at rest.\n\nThis document records the current implementation from `src/styles.css`, `index.html`, `src/lib/icons.ts`, `src/views/paste.ts`, and `src/lib/markdown.ts`, interpreted with `PRODUCT.md` and `.impeccable/surfaces/src-main-ts.md`. Values are source-derived, not sampled from a rendered browser. Browser rendering was unavailable through CUA, and Playwright was prohibited. A separate source reviewer reported five recovery issues resolved; that report is not visual approval. No screenshots or visual acceptance are claimed here.",
+    "keyCharacteristics": [
+      "Saturated blue actions with white and pale gray surfaces.",
+      "Transparent, borderless resting icon controls using Font Awesome SVGs.",
+      "Ordinary controls use gently rounded corners; circles and larger containers retain their own geometry.",
+      "Narrow conversation reading width and a viewport-filling Markdown workspace."
+    ],
+    "rules": [],
+    "dos": [
+      "Do preserve the supplied saturated blue, white work areas, pale gray gates, and muted slate supporting text.",
+      "Do keep Font Awesome icon controls transparent and borderless at rest unless the action is emphasized.",
+      "Do use the ordinary control radius for regular controls and preserve the established circle, pill, and panel exceptions.",
+      "Do retain visible keyboard focus and the reduced-motion treatment when extending these components.",
+      "Do distinguish source review from visual acceptance when reporting completion."
+    ],
+    "donts": [
+      "Don't turn every icon into a filled or outlined resting button.",
+      "Don't flatten the established circular actions and larger panels to the ordinary control radius.",
+      "Don't introduce decorative palette roles, font dependencies, or shadows unsupported by the implementation or supplied references.",
+      "Don't present component previews, source checks, or generated color ramps as screenshots or browser validation."
+    ]
+  }
+}

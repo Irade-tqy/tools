@@ -10,6 +10,7 @@ import {
   DEFAULT_SUPABASE_ANON_KEY,
   DEFAULT_SUPABASE_URL,
 } from './defaults';
+import { appBase } from './routes';
 
 export type ModelType = 'default' | 'expert' | 'vision';
 
@@ -147,7 +148,7 @@ export function loadRuntimeConfigFile(timeoutMs = 1500): Promise<Partial<Config>
   return new Promise((resolve) => {
     if (typeof document === 'undefined') return resolve(undefined);
     const script = document.createElement('script');
-    script.src = new URL('./config.js', location.href).href;
+    script.src = new URL(`${appBase()}config.js`, location.origin).href;
     const done = () => resolve(window.TOOLS_CONFIG);
     script.onload = done;
     script.onerror = () => resolve(undefined);

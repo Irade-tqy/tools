@@ -145,6 +145,8 @@ function upsertTool(state: ChatState, tool: ToolPayload): void {
  * cursor ask the server for the hole.
  */
 export function applyChunk(state: ChatState, seq: number, payload: ChunkPayload, now = Date.now()): ChatState {
+  // Another relay may own the job; its DB stream supplies the answer and sequence.
+  if (payload.error?.startsWith('not_claimed:')) return state;
   if (state.seen.has(seq)) return state; // already in the answer (redelivery from another transport)
   if (seq !== state.nextSeq) {
     if (!state.pending.has(seq)) {

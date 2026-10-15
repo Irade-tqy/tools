@@ -20,6 +20,8 @@ export interface ChatTurn {
   citations?: ChatCitation[];
   mode?: string;
   at: number;
+  /** Parent before this user turn, used to edit or regenerate the branch. */
+  parentId?: string | null;
 }
 
 export interface ChatSession {
@@ -96,4 +98,30 @@ export function sessionLabel(session: ChatSession): string {
   const turns = session.turns.filter((t) => t.role === 'user').length;
   const name = session.title || (session.dsSessionId ? `${session.dsSessionId.slice(0, 8)}…` : '新会话');
   return `${name} · ${turns} 轮`;
+}
+
+export function parseSession(raw: string): ChatSession {
+  const value: unknown = JSON.parse(raw);
+  if (!value || typeof value !== 'object') throw new Error('会话文件格式不正确。');
+  const s = value as Record<string, unknown>;
+  if (typeof s.title !== 'string' || typeof s.startedAt !== 'number' || !Number.isFinite(s.startedAt)
+    || !(s.dsSessionId === null || typeof s.dsSessionId === 'string')
+    || !(s.parentId === null || typeof s.parentId === 'string') || !Array.isArray(s.turns)) {
+    throw new Error('请选择 Tools 导出的 JSON 会话文件。');
+  }
+  const turns: ChatTurn[] = s.turns.map((item: unknown) => {
+    if (!item || typeof item !== 'object') throw new Error('会话包含无效消息。');
+    const t = item as Record<string, unknown>;
+    if ((t.role !== 'user' && t.role !== 'assistant') || typeof t.content !== 'string'
+      || typeof t.at !== 'number' || !Number.isFinite(t.at)
+      || (t.thinking !== undefined && typeof t.thinking !== 'string')
+      || (t.parentId !== undefined && t.parentId !== null && typeof t.parentId !== 'string')) {
+      throw new Error('会话包含无效消息。');
+    }
+    // Only import display text and continuation ids, never arbitrary object properties.
+    return { role: t.role, content: t.content, at: t.at,
+      thinking: t.thinking as string | undefined, parentId: t.parentId as string | null | undefined };
+  });
+  return { localId: newLocalId(), title: s.title, startedAt: s.startedAt,
+    dsSessionId: s.dsSessionId as string | null, parentId: s.parentId as string | null, turns };
 }
