@@ -76,7 +76,7 @@ async function rpc(fn, args) {
  * normalized chunks the real relay sends (v1 text / tool / done frames), then complete the
  * job with the conversation ids so the UI can continue the session.
  */
-async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool, outOfOrderTool }) {
+async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool, outOfOrderTool, failWith }) {
   const workerId = `smoke-${Math.random().toString(36).slice(2, 8)}`;
   const started = Date.now();
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -121,6 +121,27 @@ async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageI
       if (!out.ok && abortOnSeq != null && seq >= abortOnSeq) return { job_id: claim.job_id, cancelled: true, seq, claim };
     }
     if (toolPayload && outOfOrderTool) await append(toolPayload, 0);
+    if (failWith) {
+      // A turn the upstream refused: the relay still learns which DeepSeek conversation it
+      // tried to join, and the next turn has to continue that same one.
+      await append({
+        v: 1,
+        _transport: 'smoke',
+        done: true,
+        ok: false,
+        error: failWith,
+        job_id: claim.job_id,
+        session_id: sessionId ?? `sess-${workerId}`,
+      });
+      await rpc('deepseek_complete', {
+        p_job_id: claim.job_id,
+        p_ok: false,
+        p_error: failWith,
+        p_metrics: { upstream_total_ms: Date.now() - started, transport: 'smoke' },
+        p_session_id: sessionId ?? `sess-${workerId}`,
+      });
+      return { job_id: claim.job_id, seq, failed: true, claim };
+    }
     await append({
       v: 1,
       _transport: 'smoke',
@@ -417,6 +438,38 @@ try {
     }),
     clearedSession,
   );
+
+  // --- a turn the upstream refuses must not cost the user the conversation
+  // DeepSeek spends whole hours answering "服务器暂时不可用", so the failure path is the normal
+  // path some days: the reason has to reach the user, the failed turn has to stay visible, and
+  // the next turn has to continue the same DeepSeek conversation instead of starting a new one.
+  const failTransport = fakeTransport({
+    respondWith: '',
+    sessionId: 'sess-after-fail',
+    replyMessageId: 21,
+    failWith: '服务器暂时不可用（backend_err）',
+  });
+  await page.fill('#chat-input', '这一轮会被上游拒绝');
+  await page.click('#chat-send');
+  await page
+    .waitForFunction(() => /错误/.test(document.querySelector('.msg--assistant:last-of-type')?.textContent || ''), null, { timeout: 25_000 })
+    .catch(() => {});
+  const failedTurn = (await page.textContent('.msg--assistant:last-of-type')) || '';
+  check('a refused turn shows the upstream reason', /服务器暂时不可用/.test(failedTurn), failedTurn.slice(0, 160));
+  const failedResult = await failTransport;
+  check('the refused turn starts a fresh conversation like any first turn', !failedResult.claim?.session_id, failedResult.claim?.session_id);
+
+  const recoverTransport = fakeTransport({ respondWith: '这一轮恢复正常', sessionId: 'sess-after-fail', replyMessageId: 22 });
+  await page.fill('#chat-input', '再来一轮');
+  await page.click('#chat-send');
+  await page
+    .waitForFunction(() => /这一轮恢复正常/.test(document.querySelector('.msg--assistant:last-of-type')?.textContent || ''), null, { timeout: 25_000 })
+    .catch(() => {});
+  const recoverResult = await recoverTransport;
+  check('the turn after a failure continues the same DeepSeek conversation', recoverResult.claim?.session_id === 'sess-after-fail', recoverResult.claim?.session_id);
+  check('the failed turn stays in the transcript', (await page.locator('.msg--assistant').count()) === 2, await page.locator('.msg--assistant').count());
+  const stillFailed = (await page.locator('.msg--assistant').first().textContent()) || '';
+  check('the failed turn is not rewritten as a success', /错误/.test(stillFailed), stillFailed.slice(0, 160));
 
   // --- backend page stays hidden until ?admin=1
   check('the backend tab is hidden in the public site', !(await page.isVisible('.tab[data-view=admin]')), await page.textContent('.tabs'));
