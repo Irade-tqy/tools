@@ -168,14 +168,16 @@ SMOKE_BASE_URL=https://irade-tqy.github.io/tools node scripts/browser-smoke.mjs
 
 **Pages**：push main → `Deploy Pages` 工作流跑 `npm run build` → `actions/deploy-pages` 发布 `dist/`。构建用相对路径，换仓库名或子目录都不用改配置。`CI` 工作流在干净 runner 上跑：生成物校验 + typecheck + 构建 + 单测，以及（`LIVE_TESTS` / `BROWSER_TESTS` 已开）对真项目的 `db-push` + `db-test`（**99/99**）和 Playwright 浏览器冒烟（**49/49**）—— 全部在 GitHub 的机器上跑通，不依赖这台开发机。
 
-**转发通道**：`npm run relay:install`（systemd user + linger，重启后自动在）。停掉它前端不会崩，只会明说「没有通道在领取任务」。
+**转发通道**：`npm run relay:install`（systemd user + linger，重启后自动在；本机单元名 `tools-relay`，`npm run relay:status` / `relay:logs` 看状态）。停掉它前端不会崩，只会明说「没有通道在领取任务」。
 
-**Edge Function**（可选的第二通道，需要 `SUPABASE_ACCESS_TOKEN=sbp_…`，Dashboard → Account → API Keys → Personal access token）：
+**Edge Function**（第二通道，已部署在 `functions/v1/deepseek-chat`，`--no-verify-jwt`；需要 `SUPABASE_ACCESS_TOKEN=sbp_…`，Dashboard → Account → API Keys → Personal access token）：
 
 ```bash
 npm run secrets:sync        # TOOLS_ADMIN_TOKEN / DEEPSEEK_CREDENTIAL → Supabase secrets
-npm run functions:deploy    # 部署 supabase/functions/deepseek-chat（--no-verify-jwt）；--dry-run = deno check + 体积报告（不需令牌）
+npm run functions:deploy    # 部署 supabase/functions/deepseek-chat；--dry-run = deno check + 体积报告（不需令牌）
 ```
+
+两条通道跑的是同一套协议实现（`supabase/functions/_shared/`），谁在心跳 `deepseek_health` 就记谁。Edge 通道已验证能在 Deno 里加载 wasm、解 PoW、建会话并领取队列任务；本机转发是它的备份。
 
 登录态本身存在数据库里，所以**轮换登录态不需要重新部署**；只有改函数代码时才要重新 deploy。
 

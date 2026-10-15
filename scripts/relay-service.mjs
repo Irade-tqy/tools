@@ -7,9 +7,9 @@
 //
 // Why a service here at all: the browser queues a turn with deepseek_ask() and reads the
 // answer out of deepseek_chunk, so the relay only needs outbound HTTPS — it does not have to
-// be reachable. That makes this box a real production relay while the Supabase Edge Function
-// (same protocol, supabase/functions/deepseek-chat) waits on a SUPABASE_ACCESS_TOKEN to
-// deploy. deepseek_health() counts whichever of them is heartbeating.
+// be reachable. That makes this box a real production relay: a warm backup to the Edge Function
+// (same protocol, supabase/functions/deepseek-chat, deployed to functions/v1/deepseek-chat).
+// deepseek_health() counts whichever of them is heartbeating.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
