@@ -9,7 +9,7 @@
 静态站点（GitHub Pages）+ Supabase 的工具箱，线上地址 **https://irade-tqy.github.io/tools/** 。
 
 - **云剪贴板**：共享模式。密码来自服务端允许列表，验证后拿到临时令牌；所有已验证用户看到同一份内容。文本明文存储，文件在浏览器内用 AES-GCM 加密后再上传。条目默认保留 7 天，访问时顺带清理过期项。
-- **DeepSeek 对话**：转发通道（常驻进程 / Edge Function，同一份代码）用 DeepSeek 官网自己的会话协议转发，流式回传；**支持同一个会话继续追问，也可以一键新开会话**。界面显示首字延迟、排队时间、相对上游的额外耗时，以及「已调用工具」标记（官网调了搜索/打开页面时）。
+- **DeepSeek 对话**：转发通道（常驻进程 / Edge Function，同一份代码）用 DeepSeek 官网自己的会话协议转发，流式回传；**支持同一个会话继续追问，也可以一键新开会话**；**支持上传文件**（官网能传的格式这里就能传）。界面显示首字延迟、排队时间、相对上游的额外耗时，以及「已调用工具」标记（官网调了搜索/打开页面时）。
 - **后台**：线上默认不显示。只有 URL 带 `?admin=1` 才会出现「后台」标签页（DeepSeek 登录态输入框、队列计数、自托管覆盖项）。
 
 代码是公开的，里面只有**公开值**：Supabase 地址、anon key、Edge Function 名已内置在 `src/lib/defaults.ts`（anon key 本来就是客户端公开凭据，数据边界是 RLS；`tests/defaults.test.ts` 会拦住误提交的非 anon key）。真正的密钥 —— service role key、数据库密码、剪贴板密码、管理令牌、DeepSeek 登录态 —— 不进仓库。
@@ -21,13 +21,14 @@
 | 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**99 项**端到端检查通过（`npm run test:db`） |
 | 单元测试 | **163 项**通过（`npm test`），含录制的 DeepSeek 真实流回放（含上游自己报「服务器暂时不可用」那段）与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列）；**8 项**拔服务演练通过（`npm run test:live:outage`：无人领取时告知用户、排队不丢、重启后补答） |
-| Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
-| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **49 项**检查通过（`npm run test:browser`，含故意乱序投递的块流、上游拒答后同一会话仍能续聊），另有 **39 项**直接打线上站点（`npm run test:live`，含五种登录态字符串格式粘贴、跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸） |
+| Edge Function（Deno） | **已部署**（`functions/v1/deepseek-chat`，61 kB）：领取队列任务、wasm 解 PoW、建会话全部线上验证；上传附件与查解析状态也走它。本地另有 **23 项**端到端检查（`npm run test:function`）。与常驻 relay 互为备份 |
+| 文件上传 | **已上线**：`+` 上传、`…` 放模型/思考/搜索开关；真实浏览器 **9 项**检查直接打线上站点（`npm run test:upload`：登录码 → 上传 → 等上游解析 → 发送 → 答案必须来自文件内容） |
+| 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **49 项**检查通过（`npm run test:browser`，含故意乱序投递的块流、上游拒答后同一会话仍能续聊），另有 **39 项**直接打线上站点（`npm run test:live`，含五种登录态字符串格式粘贴、跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸）。**注意**：前端重写（聊天优先 + 登录门，`/paste` 独立路由）之后 `test:browser` 的选择器已失配，目前只能跑到第 3 项就崩，需要按新 UI 重写这套冒烟测试 |
 | Pages | **已上线**，push main 即由 Actions 构建发布 |
 | CI（干净 runner，不靠这台机器） | **全绿**：生成物校验 + typecheck + 构建 + 单测，加上对真项目的 `db-push` / `db-test` **99/99** 与 Playwright 冒烟 **49/49**（走 session pooler 的 IPv4，见「本地开发」里的 IPv6 说明） |
 | DeepSeek 上游 | **已跑通**：登录态已拿到并存进数据库；实测上游首字 ~0.6s、整轮 ~1.2s（见「延迟实测」） |
 
-线上还差的只有一件事：把 `supabase/functions/deepseek-chat` 推上去（`npm run functions:deploy` 或 `gh variable set SUPABASE_DEPLOY --body on`，都需要一个 Supabase 个人访问令牌 `sbp_…`）。**不影响可用性** —— 转发通道已经在跑（见下节）。没 token 时先跑 `npm run functions:deploy -- --dry-run`：它用 `deno check` 校验函数、并报出源码体积（当前 106.8 KB，限额 4 MB），部署前能查的都查完。
+两条转发通道都在跑：常驻 relay（systemd）+ Edge Function，`deepseek_health` 谁心跳记谁。改完 `.env.local` 里的密钥后跑 `npm run secrets:sync`，改了函数代码才需要 `npm run functions:deploy`。
 
 ## DeepSeek 转发
 
@@ -38,14 +39,19 @@ DeepSeek 官网用的不是公开的 `/v1/chat/completions`，而是自己的会
 ```
 POST /api/v0/chat/create_pow_challenge   {target_path}                 → PoW 挑战
 POST /api/v0/chat_session/create         {}                            → chat_session.id
+POST /api/v0/file/upload_file            multipart, 字段名 file          → {id: "file-<uuid>", status: PENDING}
+GET  /api/v0/file/fetch_files?file_ids=… 查询解析状态（上游异步解析）      → {files: [{id, status, signed_path}]}
 POST /api/v0/chat/completion             {chat_session_id, parent_message_id, prompt,
-                                          model_type, thinking_enabled, search_enabled, …}
+                                          model_type, thinking_enabled, search_enabled,
+                                          ref_file_ids: ["file-…"], …}
      header x-ds-pow-response: base64({algorithm,challenge,salt,answer,signature,target_path})
-     SSE: event: ready | update_session | title | close + JSON 补丁
+     SSE: event: ready | update_file | update_session | title | close + JSON 补丁
 ```
 
 几个必须踩准的点（都已写成测试）：
 
+- **上传也要 PoW，而且挑战是按 `target_path` 发的**：上传必须用 `upload_file` 那条路径去要挑战，拿补全的那条去解会失败。上传请求**不能带 `content-type`** —— 带了就没有 `multipart/form-data; boundary=…`，上游直接回 HTTP 400 `Invalid \`boundary\``。上传完先回 `PENDING`，要轮 `fetch_files` 等到 `SUCCESS` 再发才稳。
+- 附件的字节只走一趟（浏览器 → Edge Function → DeepSeek），队列里只存 `file-…` 这个 id，所以 32 KB 的 prompt 限额不会被大文件撑爆。
 - **登录态不在 Cookie 里**，在 `localStorage.userToken`，请求用 `Authorization: Bearer <userToken>`。Cookie 只是可选补充。
 - **`chat_session_id` 不能为 null** —— 新会话必须先 `chat_session/create` 拿到 UUID 再发。
 - **PoW 必须当场算**：挑战是一次性的，难度 144000。算法是 SHA3-256(`prefix || challenge || 十进制answer`)，直接跑官网那颗 26KB 的 wasm（`scripts/vendor/sha3_wasm_bg.wasm`，零 import，~20ms 解出），由 `scripts/pow-vendor.mjs` 以 base64 内联进函数，`tests/pow.test.ts` 钉住字节哈希和一组真实挑战/答案。

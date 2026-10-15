@@ -32,6 +32,9 @@ page.on('requestfailed', (r) => {
   // ./config.js is the optional self-hosting override (git-ignored, see src/lib/config.ts), so a
   // 404 for it is the normal case on this deployment, not a failure.
   if (/\/config\.js$/.test(r.url())) return;
+  // Aborting the Edge Function's SSE stream is how the client tears the connection down; the
+  // browser reports it as a failed request even though the turn completed.
+  if (/\/functions\/v1\//.test(r.url()) && /ERR_ABORTED/i.test(r.failure()?.errorText || '')) return;
   errors.push(`${r.method()} ${r.url().slice(0, 90)} ${r.failure()?.errorText}`);
 });
 

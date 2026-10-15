@@ -206,6 +206,7 @@ select { padding: 8px 12px; background: var(--ground); border: 1px solid var(--l
   .composer-dock { width: calc(100% - 24px); padding-bottom: max(12px, env(safe-area-inset-bottom)); }.chat-composer { border-radius: 26px; }
   /* The upload and … buttons are primary touch targets on a phone; 40px failed the 44px rule. */
   .chat-composer .icon-button:not(.primary) { width: 44px; height: 44px; }
+  .chat-composer .action-circle { width: 44px; height: 44px; }
   .settings-panel { width: calc(100% - 28px); margin: 20px auto; padding: 20px; min-height: 72dvh; border-radius: 18px; }.settings-row { padding: 15px; }.settings-row .password-form { width: 100%; }
   .paste-screen { padding: 5px; }.editor-toolbar { padding: 4px; gap: 0; }.format-tools { flex-wrap: nowrap; overflow-x: auto; flex: 1 0 100%; padding-bottom: 3px; }.document-tools { width: 100%; justify-content: flex-end; padding-top: 3px; border-top: 1px solid var(--line); }.paste-name { flex: 1; text-align: left; padding-left: 5px; }
   .editor-preview { padding: 18px 15px; font-size: 14px; }.editor-host .cm-editor { font-size: 13px; }.editor-host .cm-gutterElement { padding-left: 6px; padding-right: 6px; }.editor-host .cm-line { padding: 0 7px; }

@@ -136,10 +136,41 @@ describe('rpc plumbing', () => {
       p_thinking: true,
       p_search: false,
       p_queue: 'default',
+      p_file_ids: null,
     });
     // A new conversation sends no ids at all.
     expect(requests[1]!.body).toMatchObject({ p_prompt: 'new', p_session_id: null, p_parent_message_id: null });
     expect(requests[2]!.body).toEqual({ p_job_id: 'job-1', p_since_seq: 3 });
+  });
+
+  it('queues uploaded file ids with the turn', async () => {
+    stubFetch({ ok: true });
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default', queue: 'default' });
+    await api.ask({ prompt: '读这份文件', fileIds: ['file-446dbaf9-1b17-482f-b733-007992af73b5'] });
+    expect(requests[0]!.body).toMatchObject({ p_file_ids: ['file-446dbaf9-1b17-482f-b733-007992af73b5'] });
+  });
+
+  it('uploads an attachment as multipart without pinning a content-type', async () => {
+    // DeepSeek answers HTTP 400 "Invalid `boundary`" if a content-type header is sent on the
+    // FormData body, because it suppresses the multipart boundary fetch would otherwise generate.
+    // The shared RPC headers pin application/json, so this guards the one call that must not.
+    const seen: { url: string; headers: Record<string, string>; body: unknown }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        seen.push({ url: String(input), headers: (init?.headers ?? {}) as Record<string, string>, body: init?.body });
+        return { ok: true, status: 200, json: async () => ({ ok: true, file: { id: 'file-446dbaf9-1b17-482f-b733-007992af73b5', name: 'a.txt', size: 3, status: 'PENDING' } }) };
+      }),
+    );
+    const api = new ToolsApi({ url: URL, anonKey: KEY, functionName: 'deepseek-chat', modelType: 'default', queue: 'default' });
+    const out = await api.uploadFile(new File(['abc'], 'a.txt', { type: 'text/plain' }));
+    expect(out.ok).toBe(true);
+    expect(out.file?.id).toBe('file-446dbaf9-1b17-482f-b733-007992af73b5');
+    expect(seen[0]!.url).toContain('/functions/v1/deepseek-chat');
+    expect(seen[0]!.body).toBeInstanceOf(FormData);
+    expect(Object.keys(seen[0]!.headers).map((k) => k.toLowerCase())).not.toContain('content-type');
+    expect(seen[0]!.headers.apikey).toBe(KEY);
+    vi.unstubAllGlobals();
   });
 
   it('turns an HTTP error into an ApiError carrying the Postgres message', async () => {
