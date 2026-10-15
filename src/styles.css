@@ -7,6 +7,7 @@
   --fg-dim: #97a4b3;
   --accent: #4c8dff;
   --accent-press: #2f6fd6;
+  --accent-deep: #2861bd;
   --ok: #35b46a;
   --warn: #d9a13b;
   --err: #e5534b;
@@ -41,7 +42,7 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
-.brand { font-weight: 700; letter-spacing: 0.4px; }
+.brand { margin: 0; font-size: inherit; font-weight: 700; letter-spacing: 0.4px; }
 
 .tabs { display: flex; gap: 4px; }
 
@@ -102,8 +103,13 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--bg-soft); 
 }
 .btn:hover { border-color: #33404f; }
 .btn:disabled { opacity: 0.5; cursor: progress; }
-.btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn--primary:hover { background: var(--accent-press); border-color: var(--accent-press); }
+/* White on --accent (#4c8dff) is only 3.2:1, which fails WCAG AA for button-sized text — axe
+   flagged 发送 on the deployed page. The filled button therefore rests on --accent-press (4.8:1)
+   and darkens on hover (5.9:1); --accent stays for text and outlines on the dark background,
+   where it measures 5.8:1. */
+.btn--primary { background: var(--accent-press); border-color: var(--accent-press); color: #fff; }
+.btn--primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
+.btn--primary:active { background: var(--accent-deep); }
 .btn--ghost { background: transparent; }
 .btn--sm { padding: 4px 10px; font-size: 13px; }
 .btn--danger { color: var(--err); }
