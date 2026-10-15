@@ -39,6 +39,10 @@ const parseDuration = (raw, fallback) => {
 };
 
 const IDLE_MS = parseDuration(flagValue('--idle-ms', ''), 1000);
+// Claim-poll floor. A flat IDLE_MS sleep made the queue wait the biggest single slice of our
+// overhead over the official site (measured p50 1.6s, p90 2.2s out of a 5s budget), so the loop
+// below polls FAST_MS right after work and only backs off while quiet.
+const FAST_MS = Math.max(50, parseDuration(flagValue('--fast-ms', ''), 250));
 const IDLE_EXIT_MS = parseDuration(flagValue('--idle-exit', ''), 0);
 const ONCE = has('--once');
 const QUEUE = flagValue('--queue', env.TOOLS_RELAY_QUEUE || 'default').slice(0, 32);
@@ -171,7 +175,7 @@ const watchdog = setInterval(() => {
 }, Math.max(5_000, Math.floor(WATCHDOG_MS / 3)));
 watchdog.unref?.();
 
-log(`worker ${WORKER_ID} → ${supabaseUrl} (queue ${QUEUE}, idle ${IDLE_MS}ms${ONCE ? ', once' : ''}${IDLE_EXIT_MS ? `, idle-exit ${IDLE_EXIT_MS}ms` : ''})`);
+log(`worker ${WORKER_ID} → ${supabaseUrl} (queue ${QUEUE}, poll ${FAST_MS}ms→${IDLE_MS}ms${ONCE ? ', once' : ''}${IDLE_EXIT_MS ? `, idle-exit ${IDLE_EXIT_MS}ms` : ''})`);
 
 let credentialWarned = false;
 while (!stopping) {
@@ -207,7 +211,13 @@ while (!stopping) {
   if (outcome.reason === 'no_credential' && !credentialWarned) {
     credentialWarned = true;
   }
-  await sleep(IDLE_MS + Math.floor(Math.random() * Math.max(1, IDLE_MS / 2)));
+  // Adaptive claim poll: latency only matters while someone is actually using the tool, so stay
+  // at FAST_MS for the first 10s after any turn (follow-up messages arrive in that window) and
+  // then ramp geometrically up to the IDLE_MS ceiling. An idle relay still polls ~1/s; an active
+  // one picks a queued turn up in a quarter second.
+  const ramp = Math.floor((Date.now() - lastWorkAt) / 10_000);
+  const step = Math.min(IDLE_MS, Math.max(FAST_MS, FAST_MS * 2 ** Math.min(ramp, 6)));
+  await sleep(step + Math.floor(Math.random() * Math.max(1, Math.floor(step / 3))));
 }
 
 log(`served ${turns} turn(s) in ${Math.round((Date.now() - startedAt) / 1000)}s; credential ${mask((await resolveCredential().catch(() => ({}))).credential?.token || '', 4)}`);

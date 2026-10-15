@@ -60,6 +60,29 @@ async function lastAnswer(page) {
   return page.evaluate(() => document.querySelector('.msg--assistant:last-of-type')?.textContent || '');
 }
 
+/**
+ * DeepSeek reports degradation out of band and it flaps on a seconds timescale: `服务器暂时不可用
+ * （backend_err）`, a stream that dies before its `close` frame, and the occasional `invalid token`
+ * from create_pow_challenge. None of those is this product's failure, and a suite that fails on
+ * them cannot tell a real regression from an upstream mood swing — so retry a bounded number of
+ * times and count it. A genuine regression (no relay, lost session, missing tool chip) does not
+ * match these signatures and still fails immediately.
+ */
+const UPSTREAM_DEGRADED =
+  /服务器暂时不可用|backend_err|upstream closed without an answer|invalid token|rate.?limit|too many|限流|繁忙|稍后再试/i;
+let turnRetries = 0;
+
+async function sendTurn(page, text, { attempts = 4, waitMs = 6000 } = {}) {
+  let last = '';
+  for (let i = 0; i < attempts; i++) {
+    last = await send(page, text);
+    if (!UPSTREAM_DEGRADED.test(last)) return last;
+    turnRetries++;
+    if (i < attempts - 1) await page.waitForTimeout(waitMs);
+  }
+  return last;
+}
+
 async function send(page, text) {
   await page.waitForFunction(() => document.getElementById('chat-send')?.disabled === false, null, { timeout: 120_000 });
   await page.fill('#chat-input', text);
@@ -100,7 +123,7 @@ try {
 
   // 1. a real turn, served by the resident relay
   const turnQueuedAt = new Date();
-  const first = await send(page, `请记住这个代号：${marker}。只回复：好的`);
+  const first = await sendTurn(page, `请记住这个代号：${marker}。只回复：好的`);
   check('a real answer renders on the live site', first.includes('好的'), first.slice(0, 160));
   const status1 = (await page.textContent('#chat-status')) || '';
   check('the live status strip reports the upstream first token', /首字/.test(status1), status1);
@@ -133,23 +156,25 @@ try {
 
   // The agreed budget: our end-to-end time-to-first-token may exceed upstream's by at most 5s.
   // The page prints the difference itself, so this asserts what a visitor is actually told.
-  const meta1 = (await page.locator('.msg__meta').first().textContent().catch(() => null)) || '';
+  // last(), not first(): a retry appends another bubble, and the turn whose overhead matters is
+  // the one that actually got an answer.
+  const meta1 = (await page.locator('.msg__meta').last().textContent().catch(() => null)) || '';
   check('the live turn reports its overhead over upstream', /额外 \d/.test(meta1), meta1);
   check('the live turn stays inside the 5s overhead budget', meta1.includes('额外') && !/超 5s/.test(meta1), meta1);
 
   // 2. continue the same conversation
-  const second = await send(page, '我刚才让你记住的代号是什么？只回复代号');
+  const second = await sendTurn(page, '我刚才让你记住的代号是什么？只回复代号');
   check('the live site continues the same conversation', second.includes(marker), second.slice(0, 160));
 
   // 3. a new conversation forgets it
   await page.click('#chat-new-session');
   await page.waitForFunction(() => document.querySelectorAll('.msg').length === 0, null, { timeout: 10_000 });
-  const third = await send(page, '我刚才让你记住的代号是什么？只回复代号');
+  const third = await sendTurn(page, '我刚才让你记住的代号是什么？只回复代号');
   check('新会话 starts over and forgets the marker', !third.includes(marker), third.slice(0, 160));
 
   // 4. tools surface as a chip, not as answer text
   await page.setChecked('#chat-search', true);
-  const fourth = await send(page, '今天上海天气怎么样？');
+  const fourth = await sendTurn(page, '今天上海天气怎么样？');
   const chip = await page.evaluate(() => document.querySelector('.msg--assistant:last-of-type .chip--tool')?.textContent || '');
   check('a tool-using turn shows the "已调用工具" marker', /已调用工具/.test(chip), chip.slice(0, 200));
   check('tool noise stays out of the answer text', !/搜索到\s*\d+\s*个网页/.test(fourth), fourth.slice(0, 200));
@@ -260,7 +285,7 @@ try {
     // Recovery: swapping the string back has to bring the service back on the very next turn.
     await page.goto(`${BASE}/#view=chat`, { waitUntil: 'load' });
     await page.waitForSelector('#chat-input', { state: 'visible', timeout: 25_000 });
-    const recovered = await send(page, '恢复测试：只回复 OK');
+    const recovered = await sendTurn(page, '恢复测试：只回复 OK');
     check('replacing the credential brings the service back', /OK/.test(recovered), recovered.slice(0, 160));
     const healthBack = await call('deepseek_health');
     check('the credential error clears once a turn succeeds', !healthBack.body?.credential_error, healthBack.body?.credential_error);
@@ -373,6 +398,9 @@ const failed = results.filter((r) => !r.pass);
 // that need a real answer cannot pass. Say so, so a red run is never mistaken for a regression.
 const degraded = failed.filter((r) => /服务器暂时不可用|backend_err|upstream closed/i.test(`${r.name} ${r.detail || ''}`));
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
+if (turnRetries) {
+  console.log(`  absorbed ${turnRetries} upstream-degraded turn(s) with retries — DeepSeek reported it is temporarily unavailable`);
+}
 if (degraded.length) {
   console.log(`  ${degraded.length}/${failed.length} failures are turns that need a live DeepSeek answer, and the upstream reported it is temporarily unavailable`);
 }

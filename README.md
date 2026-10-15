@@ -13,7 +13,7 @@
 | 部分 | 状态 |
 | --- | --- |
 | 数据库（迁移 / RPC / RLS / 限流 / TTL / 登录态 / 转发心跳 / 队列） | 已应用到线上项目，**99 项**端到端检查通过（`npm run test:db`） |
-| 单元测试 | **160 项**通过（`npm test`），含录制的 DeepSeek 真实流回放与转发的落库语义 |
+| 单元测试 | **163 项**通过（`npm test`），含录制的 DeepSeek 真实流回放（含上游自己报「服务器暂时不可用」那段）与转发的落库语义 |
 | 转发通道（relay） | **已上线**：`tools-relay.service`（systemd user + linger）常驻，**17 项**端到端检查通过（`npm run test:worker`，真实上游 + 真实队列）；**8 项**拔服务演练通过（`npm run test:live:outage`：无人领取时告知用户、排队不丢、重启后补答） |
 | Edge Function（Deno） | 代码完成，本地用 Deno 跑通 **23 项**端到端检查（`npm run test:function`）；线上未部署 —— 缺一个 Supabase access token，部署后与常驻 relay 互为备份 |
 | 前端（剪贴板 / 对话 / 隐藏后台） | 已上线，真实浏览器 **49 项**检查通过（`npm run test:browser`，含故意乱序投递的块流、上游拒答后同一会话仍能续聊），另有 **39 项**直接打线上站点（`npm run test:live`，含五种登录态字符串格式粘贴、跨设备共享剪贴板、5s 延迟预算、登录态失效演练、手机视口触控尺寸） |
@@ -148,7 +148,7 @@ CI 里这个值以 `TOOLS_DB_URL` secret 存在，所以 `db-push` / `db-test` �
 ## 测试
 
 ```bash
-npm test              # 160 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
+npm test              # 163 项单元测试（credential 解析 / 流回放 / PoW / 转发落库 / reducer / session / api / config / crypto / render）
 npm run test:db       # 99 项线上后端端到端（PostgREST + Postgres，跑完会把登录态还原）
 npm run test:worker   # 17 项：起一个真转发进程，走真实队列 + 真实上游，验证续聊 / 新会话 / 工具标记 / 心跳
 npm run test:function # 23 项：本地用 Deno 跑 Edge Function，打真实 Supabase + 真实 DeepSeek
