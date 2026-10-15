@@ -11,6 +11,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import playwright from 'playwright';
 import { anonKey, clearDeepseekBacklog, env, rpc, serviceRoleKey } from './lib.mjs';
+import { fakeTransport } from './lib-fake-transport.mjs';
 
 const args = process.argv.slice(2);
 const flagValue = (name, fallback) => {
@@ -178,6 +179,51 @@ try {
   const chip = await page.evaluate(() => document.querySelector('.msg--assistant:last-of-type .chip--tool')?.textContent || '');
   check('a tool-using turn shows the "已调用工具" marker', /已调用工具/.test(chip), chip.slice(0, 200));
   check('tool noise stays out of the answer text', !/搜索到\s*\d+\s*个网页/.test(fourth), fourth.slice(0, 200));
+
+  // 4b. conversation continuation, deterministically, on the deployed site. The live turns above
+  // prove DeepSeek remembers — but only when DeepSeek answers. What the page itself owns is the
+  // ids it queues: turn 2 must carry the previous session_id + reply_message_id, and 新会话 must
+  // drop both. The shared fake transport reads them off the claim, so this fails on a real
+  // regression and never on an upstream outage.
+  const rpcJson = (fn, payload = {}) => call(fn, payload).then((r) => r.body ?? {});
+  const contSession = `sess-live-${Date.now().toString(36)}`;
+  const page2 = await browser.newPage();
+  // The queue override lives in the hash (`#queue=test`), not the query string — see
+  // parseHashConfig in src/lib/config.ts. Using ?queue= silently lands in 'default', where the
+  // production relay answers with the real (currently degraded) DeepSeek instead of the stub.
+  await page2.goto(`${BASE}/#queue=test`, { waitUntil: 'load' });
+  await page2.click('.tab[data-view="chat"]').catch(() => {});
+  await page2.waitForSelector('#chat-input', { state: 'visible', timeout: 30_000 });
+
+  const t1p = fakeTransport(rpcJson, { respondWith: '第一轮回答', sessionId: contSession, replyMessageId: 11 });
+  await send(page2, '第一轮：只回复 OK');
+  const t1 = await t1p;
+  check(
+    'the deployed page queues a first turn with no conversation yet',
+    t1.claim && !t1.claim.session_id && !t1.claim.parent_message_id,
+    t1.claim,
+  );
+
+  const t2p = fakeTransport(rpcJson, { respondWith: '第二轮回答', sessionId: contSession, replyMessageId: 12 });
+  await send(page2, '第二轮：只回复 OK');
+  const t2 = await t2p;
+  check(
+    'the deployed page continues the same DeepSeek conversation',
+    t2.claim?.session_id === contSession && String(t2.claim?.parent_message_id) === '11',
+    t2.claim,
+  );
+
+  await page2.click('#chat-new-session');
+  await page2.waitForFunction(() => document.querySelectorAll('.msg').length === 0, null, { timeout: 10_000 });
+  const t3p = fakeTransport(rpcJson, { respondWith: '第三轮回答', sessionId: `${contSession}-new`, replyMessageId: 1 });
+  await send(page2, '新会话：只回复 OK');
+  const t3 = await t3p;
+  check(
+    '新会话 queues a turn with the conversation dropped',
+    t3.claim && !t3.claim.session_id && !t3.claim.parent_message_id,
+    t3.claim,
+  );
+  await page2.close();
 
   // 5. the shared clipboard really is shared: a second, clean browser (no localStorage, no
   // remembered token) unlocks with the same password and reads what the first one saved —

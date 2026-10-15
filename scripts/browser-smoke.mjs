@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { anonKey, clearDeepseekBacklog, env, rpc as rpcLib, serviceRoleKey, supabaseUrl } from './lib.mjs';
+import { fakeTransport as fakeTransportShared } from './lib-fake-transport.mjs';
 
 const DIST = resolve(process.cwd(), 'dist');
 const PORT = Number(process.env.SMOKE_PORT || 4178);
@@ -74,99 +75,10 @@ async function rpc(fn, args) {
 /**
  * Stand in for the Edge Function: claim whatever the UI queued and append the same
  * normalized chunks the real relay sends (v1 text / tool / done frames), then complete the
- * job with the conversation ids so the UI can continue the session.
+ * job with the conversation ids so the UI can continue the session. Shared with
+ * scripts/live-smoke.mjs — see scripts/lib-fake-transport.mjs.
  */
-async function fakeTransport({ respondWith, abortOnSeq, sessionId, replyMessageId, withTool, outOfOrderTool, failWith }) {
-  const workerId = `smoke-${Math.random().toString(36).slice(2, 8)}`;
-  const started = Date.now();
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    const claim = await rpc('deepseek_claim', { p_worker_id: workerId, p_queue: 'test' });
-    if (!claim.claimed) {
-      await new Promise((r) => setTimeout(r, 150));
-      continue;
-    }
-    const pieces = respondWith.match(/.{1,3}/gu) || [];
-    const toolPayload = withTool
-      ? {
-          v: 1,
-          _transport: 'smoke',
-          tool: {
-            id: 1,
-            type: 'SEARCH',
-            status: 'FINISHED',
-            label: '搜索到 2 个网页',
-            queries: ['上海天气'],
-            results: [
-              { cite_index: 1, title: '气象台', url: 'https://a.example', site_name: 'a.example', snippet: '晴' },
-              { cite_index: 2, title: '天气网', url: 'https://b.example', site_name: 'b.example', snippet: '多云' },
-            ],
-            page: null,
-          },
-        }
-      : null;
-    // The live race, made deterministic: the browser subscribes after the relay writes the first
-    // chunk, so the tool payload (seq 0) can reach it last. Writing seq 0 last reproduces that
-    // ordering on every run instead of waiting for the race to happen by luck.
-    let seq = toolPayload && outOfOrderTool ? 1 : 0;
-    const append = async (payload, atSeq) => {
-      const use = atSeq ?? seq;
-      const out = await rpc('deepseek_append', { p_job_id: claim.job_id, p_seq: use, p_payload: payload });
-      if (atSeq == null) seq += 1;
-      return out;
-    };
-    if (toolPayload && !outOfOrderTool) await append(toolPayload);
-    for (const piece of pieces) {
-      await new Promise((r) => setTimeout(r, 40));
-      const out = await append({ v: 1, _transport: 'smoke', text: piece });
-      if (!out.ok && abortOnSeq != null && seq >= abortOnSeq) return { job_id: claim.job_id, cancelled: true, seq, claim };
-    }
-    if (toolPayload && outOfOrderTool) await append(toolPayload, 0);
-    if (failWith) {
-      // A turn the upstream refused: the relay still learns which DeepSeek conversation it
-      // tried to join, and the next turn has to continue that same one.
-      await append({
-        v: 1,
-        _transport: 'smoke',
-        done: true,
-        ok: false,
-        error: failWith,
-        job_id: claim.job_id,
-        session_id: sessionId ?? `sess-${workerId}`,
-      });
-      await rpc('deepseek_complete', {
-        p_job_id: claim.job_id,
-        p_ok: false,
-        p_error: failWith,
-        p_metrics: { upstream_total_ms: Date.now() - started, transport: 'smoke' },
-        p_session_id: sessionId ?? `sess-${workerId}`,
-      });
-      return { job_id: claim.job_id, seq, failed: true, claim };
-    }
-    await append({
-      v: 1,
-      _transport: 'smoke',
-      done: true,
-      ok: true,
-      job_id: claim.job_id,
-      session_id: sessionId ?? `sess-${workerId}`,
-      reply_message_id: replyMessageId ?? 7,
-      title: '冒烟测试会话',
-      mode: withTool ? 'DEEP_SEARCH' : 'DEFAULT',
-      search_triggered: Boolean(withTool),
-      token_usage: 128,
-      citations: [],
-    });
-    await rpc('deepseek_complete', {
-      p_job_id: claim.job_id,
-      p_ok: true,
-      p_metrics: { upstream_ttft_ms: 700, upstream_total_ms: Date.now() - started, transport: 'smoke' },
-      p_session_id: sessionId ?? `sess-${workerId}`,
-      p_reply_message_id: replyMessageId ?? 7,
-    });
-    return { job_id: claim.job_id, seq, delivered: respondWith, claim };
-  }
-  return { error: 'never claimed' };
-}
+const fakeTransport = (opts) => fakeTransportShared(rpc, opts);
 
 async function launchChromium(chromium) {
   // Prefer a Playwright-managed build; fall back to a system Chrome/Chromium so the smoke

@@ -214,6 +214,11 @@ export async function connectDb({ retries = 3, delayMs = 1200 } = {}) {
     const client = new pg.Client(dbConfig());
     try {
       await client.connect();
+      // A connection that dies between queries (this box reaches Postgres over Tailscale's
+      // MagicDNS, and the link blips) emits 'error' on the client with no listener, which
+      // becomes an uncaught exception and kills a whole test run after its queries already
+      // succeeded. query() still rejects for the caller that is actually waiting on it.
+      client.on('error', () => {});
       return client;
     } catch (err) {
       lastError = err;
