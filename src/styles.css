@@ -103,6 +103,8 @@ input:focus, textarea:focus { outline: 2px solid #b0caff; outline-offset: 2px; }
 .chat-composer:focus-within { border-color: #b4c9f3; }
 .chat-composer textarea { flex: 1; resize: none; border: none; background: transparent; min-height: 40px; max-height: 210px; padding: 8px 6px; line-height: 24px; outline: none; }
 .chat-composer .action-circle { width: 42px; height: 42px; padding: 12px; }
+/* The composer is a pill, so a square hover/focus fill on the + and … buttons reads as a bug. */
+.chat-composer .icon-button:not(.primary) { border-radius: 50%; }
 .chat-composer .icon-button:not(.primary) { width: 40px; height: 40px; }
 .chat-status { color: var(--muted); font-size: 11px; min-height: 15px; text-align: center; margin: 8px 0 0; }
 .composer-menu { position: relative; }
