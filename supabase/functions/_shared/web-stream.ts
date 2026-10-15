@@ -277,7 +277,13 @@ function applyPatch(state: WebStreamState, obj: Record<string, unknown>, base: s
   const op = str(obj.o).toUpperCase();
 
   if (path === 'content' || path.endsWith('/content')) {
-    if (op === 'APPEND') appendContent(state, state.currentId, typeof obj.v === 'string' ? obj.v : '', emit);
+    // Upstream leaves `o` out of a lot of patches — {"p":"response/fragments/-1/content",
+    // "v":"曼"} is a delta, and the web app's own reducer defaults a missing op to APPEND.
+    // Reading the omission as SET made setContent compare the patch's length against the
+    // fragment's length, and a 1-character patch on a 1-character fragment looked like "no new
+    // text": the answer's first character, which always arrives as its own patch, vanished.
+    const value = typeof obj.v === 'string' ? obj.v : '';
+    if (op === '' || op === 'APPEND') appendContent(state, state.currentId, value, emit);
     else setContent(state, state.currentId, obj.v, emit);
     return true;
   }

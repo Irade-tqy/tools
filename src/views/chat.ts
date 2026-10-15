@@ -25,6 +25,7 @@ import { iconButton, setIcon } from '../lib/icons';
 import { applyAssistantModel, assistantNode, messageNode } from '../lib/render';
 import { readSse, SSE_DONE, type SseEvent } from '../lib/sse';
 import {
+  carryForwardPrompt,
   clearSession,
   loadSession,
   newSession,
@@ -35,6 +36,8 @@ import {
 } from '../lib/session';
 
 const POLL_INTERVAL_MS = 400;
+/** What the Stop button records as the turn's outcome; also the marker for "carry the reasoning forward". */
+const STOP_REASON = '已手动停止';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface ChatView {
@@ -205,7 +208,7 @@ export function initChat(api: ToolsApi): ChatView {
   }
 
   /** Record the turn and hand the conversation ids back to the session. */
-  function commitTurn() {
+  function commitTurn(reason?: string) {
     if (!state) return;
     if (state.sessionId) session.dsSessionId = state.sessionId;
     if (state.replyMessageId) session.parentId = state.replyMessageId;
@@ -218,6 +221,9 @@ export function initChat(api: ToolsApi): ChatView {
         tools: state.tools.length || state.searchTriggered ? toolSummaryOf(state) : undefined,
         mode: state.mode || undefined,
         at: Date.now(),
+        // A stopped turn is special twice over: upstream stored it truncated, and its reasoning
+        // has to be handed to the next request by hand (see carryForwardPrompt).
+        stopped: state.stopped || reason === STOP_REASON || undefined,
       });
     }
     saveSession(session);
@@ -233,12 +239,18 @@ export function initChat(api: ToolsApi): ChatView {
     // transport has completed it, so poll until it does, then commit.
     jobFinished = true;
     if (state.jobId) {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
+      for (let attempt = 0; attempt < 40; attempt += 1) {
         try {
           const res = await api.jobStatus(state.jobId, chunkCursor(state));
           if (!res.ok) break;
           applyStatus(state, res);
-          if (res.finished) break;
+          // A Stop flips the job to 'cancelled' the instant the RPC runs, but the transport only
+          // writes reply_message_id when it finishes its side a moment later. Breaking on
+          // `finished` alone used to commit with no id, so the next message continued from the
+          // turn *before* the stopped one and DeepSeek lost the context. Keep polling while the
+          // id is missing — unless nothing ever claimed the job, which never gets an id.
+          const claimed = Boolean(res.transport) || Number(res.metrics?.chunks ?? 0) > 0 || Boolean(res.reply_message_id);
+          if (res.finished && (state.replyMessageId || !claimed)) break;
         } catch {
           break; // keep whatever we already streamed
         }
@@ -252,7 +264,7 @@ export function initChat(api: ToolsApi): ChatView {
     state.finishedAt = state.finishedAt ?? Date.now();
     if (reason) state.error = reason;
     teardown();
-    commitTurn();
+    commitTurn(reason);
     setBusy(false);
     renderAssistant();
     if (assistant && state.text) messageActions(assistant, state.text, undefined, () => editTurn(session.turns.length - 2, true));
@@ -487,7 +499,7 @@ export function initChat(api: ToolsApi): ChatView {
     let enqueued;
     try {
       enqueued = await api.ask({
-        prompt: content,
+        prompt: carryForwardPrompt(session.turns[session.turns.length - 1], content),
         sessionId: session.dsSessionId,
         parentId: session.parentId,
         modelType: isModelType(modelSelect.value) ? modelSelect.value : 'default',
@@ -557,7 +569,7 @@ export function initChat(api: ToolsApi): ChatView {
     } catch {
       /* best effort */
     }
-    void finish('已手动停止');
+    void finish(STOP_REASON);
   }
 
   function startNewSession(): void {

@@ -44,8 +44,6 @@
               <button class="icon-button" id="chat-attach" type="button" aria-label="上传文件" title="上传文件" data-icon="plus"></button>
               <input id="chat-file" type="file" multiple hidden accept=".txt,.md,.markdown,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.json,.png,.jpg,.jpeg,.gif,.webp" />
               <textarea id="chat-input" rows="1" placeholder="发送消息…" aria-label="消息"></textarea>
-              <button class="icon-button action-circle primary" id="chat-send" type="submit" aria-label="发送消息" data-icon="arrowUp"></button>
-              <button class="icon-button action-circle primary" id="chat-stop" type="button" aria-label="停止生成" data-icon="stop" hidden></button>
               <details class="composer-menu"><summary class="icon-button" aria-label="对话选项" title="对话选项"><span data-icon="ellipsis"></span></summary>
                 <div class="composer-options">
                   <label class="field">模型<select id="chat-model"><option value="default">默认</option><option value="expert">专家</option><option value="vision">视觉</option></select></label>
@@ -53,6 +51,8 @@
                   <label class="check"><input type="checkbox" id="chat-search" />联网搜索</label>
                 </div>
               </details>
+              <button class="icon-button action-circle primary" id="chat-send" type="submit" aria-label="发送消息" data-icon="arrowUp"></button>
+              <button class="icon-button action-circle primary" id="chat-stop" type="button" aria-label="停止生成" data-icon="stop" hidden></button>
             </form>
             <p class="chat-status" id="chat-status" role="status"></p>
           </div>

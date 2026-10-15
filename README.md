@@ -58,6 +58,8 @@ POST /api/v0/chat/completion             {chat_session_id, parent_message_id, pr
 - **一个 RPC 只能有一个签名**：PostgREST 遇到重载直接 PGRST203「无法选出最佳候选」。0006 加宽 `deepseek_ask/claim` 时留了旧签名，凡是省略尾部参数的调用全部失败 —— 线上前端每次都传全参数所以看不出来，dev 脚本的 `drainDeepseekQueue()` 反而把 PGRST203 读成「队列是空的」，积压就此产生（0007 清掉旧签名，`npm run test:db` 里断言没有任何重载）。
 - **一条回复由多个 fragment 组成**，类型有 `RESPONSE / THINK / SEARCH / TOOL_SEARCH / TOOL_OPEN / TOOL_FIND / TIP / FILE`。只有 `RESPONSE` 是答案；把全部内容拼起来会把工具噪音混进正文，还会丢每个新 fragment 的首块。
 - **`[citation:N]` 按 `cite_index` 查**，不是按数组顺序（官网的 `convertCiteIndexToListIndex` 同理）。前端不渲染引用，只在合适位置显示「已调用工具：网页搜索 · 6 个结果」。
+- **补丁里的 `o` 可以缺省，缺省就是 `APPEND`**：`{"p":"response/fragments/-1/content","v":"曼"}` 是一个增量，不是整段赋值。把它当 SET 就会走「新长度 ≤ 已有长度 → 没有新文本」的判断，而答案的**首字永远是单独一个 1 字补丁**（首块在 `ready` 后的快照里，如 `content:"黎"`），于是线上「黎曼猜想」变成「黎猜想」—— 丢一个字，且只丢开头那个。录制的 fixture 里也有这种帧，但原先的断言只比「解码器自洽」（`text === state.text`），看不见丢字；现在 `tests/web-stream.test.ts` 用一份**独立重建**的全文做对照。
+- **停止后紧接着发下一条会被上游拒**：HTTP 200 + JSON（不是 SSE）+ `biz_code 11 message still wip`。把这种响应当流读就是 0 帧，用户看到假的「上游没有回答」；`completion()` 现在按 `content-type` 识别并抛错，转发的退避重试。
 - **`WIP` 是正常终态**（停止或纯工具回答），不能当失败。
 - **seq 不能当「已渲染」的水位线用**：同一个客户端由三条通道同时喂（Realtime、轮询兜底、Edge SSE），块会乱序到达。原先 `seq <= lastSeq` 直接丢弃，而订阅建立时 seq 0（工具块）往往已经写完了，于是 seq 1 先到、seq 0 永远不再被提供 —— 线上「已调用工具」标记就此消失。现在按 seq 重排：只应用连续前缀，早到的块进缓冲，游标用 `nextSeq - 1` 向服务端要缺口；终态或缺口 3 轮没补上就 `flushPending` 放尾巴（`tests/chat-reducer.test.ts` 钉住这几种到达顺序）。
 
@@ -137,6 +139,20 @@ DeepSeek 把上下文存在服务端，一个会话就是两个 id：`chat_sessi
 
 `npm run test:function` 会验证这三件事：第二轮能记住第一轮的代号、第二轮携带第一轮产生的 session id 与 parent id、换新会话后不再记得。
 
+### 停止（Stop）
+
+手动停止要做对，得同时管三件事 —— 少任何一件，下一条消息就会「忘了刚才在说什么」：
+
+1. **上游也要知道停了**。只断开 SSE 连接的话，DeepSeek 会继续生成并把**整段**答案存进会话（实测：用户看到 142，模型记得 400），下一轮就是从那半截用户从没见过的文本接的。官网的做法是 abort 之后再 `POST /api/v0/chat/stop_stream {chat_session_id, message_id}`，消息被截成 `INCOMPLETE`，存的正是已流出的内容。转发在**发现停止的当场**就发这个请求（发晚了同样无效）。
+2. **会话 id 要在传输结束前就到客户端**。`deepseek_cancel` 立刻把任务写成 `cancelled`（`finished=true`），而 `reply_message_id` 要等传输方跑完 `deepseek_complete` 才落库；客户端只等 `finished` 就会带着空 id 提交，下一轮于是从**再上一轮**接。现在传输收到 `ready` 就单独发一个只带 id 的 chunk，客户端拿到就能接上。
+3. **思考过程要手动接力**。DeepSeek 不会把上一轮的 reasoning 带进下一轮（实测：模型自己说「无法复述内部推理过程」）。所以被停止的那轮，其思考由前端拼进下一条 prompt（`carryForwardPrompt`，截到 1200 字，并明确告诉模型这是它自己没说完的思路）。
+
+另外，停止后紧接着发下一条时，上游会回 HTTP 200 + `biz_code 11 message still wip`（那条消息还没从 WIP 落定，实测约 1–3s）。这不是失败，转代会退避重试。
+
+**待解决**：停止时上游已经比数据库写出多生成了一小截（实测用户看到 142、上游存到 346，差约 1s 的生成量）。原因是停止要经 `客户端 → deepseek_cancel → 转发下一次写库才发现` 这条链，约 0.5–1s。下一轮因此会「记得一点点用户没看到的内容」。要抹平这 1s，需要转发在流式期间独立轮询任务状态（每 ~200ms 一次额外 RPC），或让客户端的停止能直接打断上游连接。
+
+`npm run test:relay` 里对应三条：id 在答案之前发出、停止会调 `stop_stream` 且不把停止当错误、`message still wip` 会重试。`node scripts/stop-path-probe.mjs` 打线上跑一遍真实停止，`node scripts/deepseek-history.mjs <session_id>` 读回上游到底存了什么。
+
 ## 本地开发
 
 ```bash
@@ -205,6 +221,9 @@ supabase/migrations/     0001 剪贴板（允许列表 / 令牌 / RLS / 限流 /
                          0005 后台粘贴登录字符串走 PostgREST（tools_secret 摘要 + 猜错限流）
                          0006 命名队列（default = 线上，test = 测试）
                          0007 一个 RPC 一个签名（删掉旧重载：PostgREST 无法重载解析）
+                         0008 没回答就不记首字时间（中位数不能被失败轮污染）
+                         0009 文件附件（file_ids 入队 / 领取 / 状态）
+                         0010 一次 RPC 写一批块（逐字块 × 逐次往返 = 2 tok/s）
 supabase/functions/      deepseek-chat（Edge Function 入口：SSE + 凭据动作）
                          _shared/relay.ts         一轮转发的全部流程（Edge 与 node 共用）
                          _shared/credential.ts    一个字符串 → 需要的数据（浏览器/脚本/函数共用）
@@ -217,6 +236,8 @@ scripts/                 db-push · db-test · worker-test · allowlist · funct
                          browser-relay · relay-service（systemd 常驻转发）· deepseek-worker（常驻转发）·
                          admin-secret（管理令牌哈希）· live-smoke（打线上站点的端到端）·
                          deepseek-credential（登录字符串入口）· deepseek-pow-node（命令行跑上游）·
+                         deepseek-history（读回上游到底存了什么）· stream-record（录一条真实流并与解码对照）·
+                         stop-path-probe（打线上跑一遍真实停止）· upload-check / paste-check（线上附件 / 登录码）·
                          pow-vendor · defaults-sync · secrets-sync · functions-deploy · pages-*
 tests/                   vitest 单元测试 + tests/fixtures/stream-*.txt（录制的真实上游流）
 ```

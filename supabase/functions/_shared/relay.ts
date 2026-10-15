@@ -93,12 +93,21 @@ export interface RelayResult {
 const MAX_RESULTS_PER_TOOL = 20;
 const SNIPPET_CHARS = 160;
 const MAX_CITATIONS = 30;
-const FLUSH_BATCH = 8;
-const FLUSH_INTERVAL_MS = 250;
+// With append_many a batch costs one round-trip whatever its size, so the batch can be larger;
+// the interval stays short because the browser is waiting on these rows, and the coalescer above
+// already decides how big a chunk is.
+const FLUSH_BATCH = 16;
+const FLUSH_INTERVAL_MS = 120;
 // PostgREST behind a TLS-intercepting proxy blips now and then. One blip used to discard the
 // rest of the batch, which is how a long answer ended up with a handful of chunks in the DB.
 const APPEND_RETRIES = 3;
 const APPEND_BACKOFF_MS = 120;
+// A turn stopped a moment ago is still WIP upstream — its message settles to INCOMPLETE a couple
+// of seconds later, and a follow-up sent straight after a Stop lands inside that window
+// (completion answers 200 + biz_code 11 "message still wip"). Retry long enough to cover it,
+// short enough not to look like a hang.
+const WIP_RETRIES = 3;
+const WIP_BACKOFF_MS = 1200;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -180,7 +189,19 @@ export class ChunkSink {
     }
   }
 
+  /**
+   * One round-trip per batch. deepseek_append used to be called once per chunk, and at ~310 ms a
+   * round-trip a 101-chunk answer took 35 s to land even though DeepSeek had finished in 2 s —
+   * the visible "2 tokens/s". If the batch call fails for a non-terminal reason, fall back to the
+   * per-chunk path so one bad seq still costs one chunk rather than the whole batch.
+   */
   private async write(batch: { seq: number; payload: RelayPayload }[]): Promise<void> {
+    const outcome = await this.writeMany(batch);
+    if (outcome.ok || outcome.terminal) {
+      if (!outcome.ok && outcome.terminal) this.cancelled = true;
+      if (!outcome.ok) this.stopReason = outcome.reason;
+      return;
+    }
     for (const item of batch) {
       const res = await this.append(item);
       if (res.ok) continue;
@@ -193,6 +214,30 @@ export class ChunkSink {
       // A transient failure costs this one chunk, not the rest of the batch. Dropping the
       // whole batch is what used to strand the done frame (and with it the session ids).
     }
+  }
+
+  private async writeMany(batch: { seq: number; payload: RelayPayload }[]): Promise<{ ok: boolean; reason: string; terminal: boolean }> {
+    if (batch.length === 1) {
+      // The single-chunk case is the common one at the end of a stream; deepseek_append is the
+      // narrower call and keeps the server-side error shape identical.
+      return this.append(batch[0]!);
+    }
+    let reason = 'unknown';
+    for (let attempt = 0; attempt <= APPEND_RETRIES; attempt += 1) {
+      try {
+        const out = await this.rpc('deepseek_append_many', {
+          p_job_id: this.jobId,
+          p_chunks: batch.map((item) => ({ seq: item.seq, payload: item.payload })),
+        });
+        if (out.ok) return { ok: true, reason: '', terminal: false };
+        reason = typeof out.error === 'string' ? out.error : JSON.stringify(out).slice(0, 160);
+        if (reason.startsWith('job_')) return { ok: false, reason, terminal: true };
+      } catch (err) {
+        reason = `transport: ${((err as Error) && (err as Error).message) || 'append_many failed'}`;
+      }
+      if (attempt < APPEND_RETRIES) await delay(APPEND_BACKOFF_MS * (attempt + 1));
+    }
+    return { ok: false, reason: `${reason} (after ${APPEND_RETRIES + 1} attempts)`, terminal: false };
   }
 
   /** deepseek_append with a little backoff; never throws, whatever the transport does. */
@@ -308,17 +353,101 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
     deps.emit?.(payload);
   };
 
+  // DeepSeek streams its thinking in ~1-character patches. Forwarding every patch as its own
+  // chunk made an 82-token answer 101 chunks: 101 DB round-trips on the way in, and (Realtime is
+  // capped at 20 events/second) ~5 s on the way out. Coalescing consecutive deltas of the same
+  // kind — every COALESCE_CHARS characters or COALESCE_MS milliseconds, whichever comes first —
+  // turns that into ~10 chunks, and the reducer sees the same appended text either way.
+  const COALESCE_CHARS = 48;
+  const COALESCE_MS = 150;
+  let pendingText = '';
+  let pendingThinking = '';
+  let coalesceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const flushText = () => {
+    if (!pendingText) return;
+    emit({ v: 1, _transport: transport, text: pendingText });
+    pendingText = '';
+  };
+  const flushThinking = () => {
+    if (!pendingThinking) return;
+    emit({ v: 1, _transport: transport, thinking: pendingThinking });
+    pendingThinking = '';
+  };
+  const flushDeltas = () => {
+    if (coalesceTimer !== null) {
+      clearTimeout(coalesceTimer);
+      coalesceTimer = null;
+    }
+    // Order matters: whichever kind arrived first has to be written first, and the caller only
+    // ever sees thinking-then-text.
+    if (pendingThinking) flushThinking();
+    if (pendingText) flushText();
+  };
+  const armCoalesceTimer = () => {
+    if (coalesceTimer !== null) return;
+    coalesceTimer = setTimeout(() => {
+      coalesceTimer = null;
+      flushDeltas();
+    }, COALESCE_MS);
+    // A pending timer holds the node process open; Deno's timers have no unref, hence the cast.
+    // The timer is cleared by every flush and by the end-of-turn flushDeltas, so this only
+    // concerns a stray timer in the last instants of a turn.
+    (coalesceTimer as unknown as { unref?: () => void }).unref?.();
+  };
+
   // One place to turn a stream delta into the chunk shape the reducer dedupes on.
   const emitDelta = (delta: { text: string; thinking: string; tool: WebTool | null }) => {
     if (delta.text) {
+      // Time-to-first-token is when the upstream spoke, not when we got around to writing it.
       if (upstreamTtftMs === null) upstreamTtftMs = Date.now() - startedAt;
-      emit({ v: 1, _transport: transport, text: delta.text });
+      if (pendingThinking) flushThinking();
+      pendingText += delta.text;
+      if (pendingText.length >= COALESCE_CHARS) flushText();
     }
-    if (delta.thinking) emit({ v: 1, _transport: transport, thinking: delta.thinking });
-    if (delta.tool) emit({ v: 1, _transport: transport, tool: outboundTool(delta.tool) });
+    if (delta.thinking) {
+      if (pendingText) flushText();
+      pendingThinking += delta.thinking;
+      if (pendingThinking.length >= COALESCE_CHARS) flushThinking();
+    }
+    if (delta.tool) {
+      flushDeltas();
+      emit({ v: 1, _transport: transport, tool: outboundTool(delta.tool) });
+    }
+    if (pendingText || pendingThinking) armCoalesceTimer();
   };
 
   let errorText: string | null = null;
+  // The user pressed Stop. Upstream has to be told, or it carries on generating and stores the
+  // whole answer — the next turn is then continued from a message the user never saw.
+  let stoppedByUser = false;
+  let idsAnnounced = false;
+
+  // The ids the next turn needs arrive in the `ready` frame, long before the transport writes
+  // deepseek_complete. Announce them as soon as they are known so a client that stops (or a
+  // page that reloads) can still continue the conversation.
+  const announceIds = () => {
+    if (idsAnnounced || !sessionId || state.responseMessageId === null) return;
+    idsAnnounced = true;
+    emit({ v: 1, _transport: transport, session_id: sessionId, reply_message_id: state.responseMessageId });
+  };
+
+  // The web app does the same thing after its own abort: it posts stop_stream so upstream
+  // truncates the message (status INCOMPLETE) instead of finishing it behind our back. This is
+  // what makes the *next* turn continue from the text the user actually read — and it has to
+  // happen the moment the Stop is noticed, because upstream is still generating: posting it after
+  // the chunks have been written (a second or two later) arrives too late and the whole answer
+  // is stored. Verified against /api/v0/chat/history_messages.
+  let stopPosted = false;
+  const stopUpstream = async () => {
+    if (stopPosted) return;
+    stopPosted = true;
+    try {
+      await client.stopStream(sessionId ?? '', state.responseMessageId);
+    } catch {
+      /* best effort — a stopped turn still has its chunks */
+    }
+  };
 
   try {
     // DeepSeek's completion endpoint refuses chat_session_id: null — a new conversation has
@@ -328,15 +457,27 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
       const created = await client.createSession();
       sessionId = created.id;
     }
-    const response = await client.completion({
-      prompt,
-      chatSessionId: sessionId,
-      parentMessageId: parentId,
-      modelType,
-      thinking,
-      search,
-      fileIds,
-    });
+    // Stopping a turn leaves its message WIP upstream for a few seconds; completion answers
+    // HTTP 200 + biz_code 11 "message still wip" until it settles to INCOMPLETE. A follow-up
+    // sent straight after a Stop lands in that window, so retry instead of failing the job.
+    let response: Response | null = null;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        response = await client.completion({
+          prompt,
+          chatSessionId: sessionId,
+          parentMessageId: parentId,
+          modelType,
+          thinking,
+          search,
+          fileIds,
+        });
+        break;
+      } catch (err) {
+        if (!/still wip/i.test((err as Error)?.message ?? '') || attempt >= WIP_RETRIES) throw err;
+        await delay(WIP_BACKOFF_MS * (attempt + 1));
+      }
+    }
     powMs = Date.now() - t0;
 
     if (!response.body) throw new Error('upstream returned no body');
@@ -349,8 +490,11 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
       if (done) break;
       for (const frame of parse(decoder.decode(value, { stream: true }))) {
         applyWebFrame(state, frame, emitDelta);
+        announceIds();
         if (sink.cancelled || deps.shouldAbort?.()) {
+          stoppedByUser = true;
           await reader.cancel().catch(() => {});
+          await stopUpstream();
           break;
         }
       }
@@ -358,9 +502,21 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
     }
     for (const frame of parse.flush()) applyWebFrame(state, frame, emitDelta);
     if (state.failed) errorText = state.failed;
-    if (!state.finished && !errorText && !state.text) errorText = 'upstream closed without an answer';
+    // A stop that landed before the first answer character is not a failure, and "upstream
+    // closed without an answer" would say it was.
+    if (!state.finished && !errorText && !state.text && !stoppedByUser) errorText = 'upstream closed without an answer';
   } catch (err) {
     errorText = (err as Error).message;
+  }
+  // Whatever is still buffered belongs to this answer: a cancelled or failed turn must not lose
+  // the last partial sentence, and the done frame has to land after it.
+  flushDeltas();
+
+  if (stoppedByUser) {
+    // The cancellation may only become visible after the last read (the DB says cancelled a
+    // moment after the stream ended). Upstream has usually finished by then and this is a no-op,
+    // but a stop that raced the end of the stream still gets the message truncated.
+    await stopUpstream();
   }
 
   const finishedAt = Date.now();
@@ -374,6 +530,7 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
     ok: !errorText,
     session_id: sessionId,
     reply_message_id: state.responseMessageId,
+    stopped: stoppedByUser,
     title: state.title,
     mode: state.mode,
     search_triggered: state.searchTriggered,

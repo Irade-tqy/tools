@@ -299,3 +299,43 @@ describe('formatting', () => {
     expect(text).toContain('120 tokens');
   });
 });
+
+describe('a turn the user stopped', () => {
+  it('learns the conversation ids from a chunk that is not the done frame', () => {
+    // The relay announces the ids when upstream's `ready` frame arrives. A Stop marks the job
+    // cancelled immediately, and the transport only writes reply_message_id a moment later, so a
+    // client that waited for the done frame committed without an id and continued the
+    // conversation from the turn *before* the stopped one.
+    const state = createChatState(0);
+    applyChunk(state, 0, { v: 1, _transport: 'worker-web', session_id: 'sess-9', reply_message_id: 7 });
+    expect(state.sessionId).toBe('sess-9');
+    expect(state.replyMessageId).toBe('7');
+    expect(state.done).toBe(false);
+    expect(state.text).toBe('');
+  });
+
+  it('accepts the ids as a number or a string, which is how PostgREST serialises bigint', () => {
+    const state = createChatState(0);
+    applyChunk(state, 0, { reply_message_id: 12 });
+    expect(state.replyMessageId).toBe('12');
+    applyChunk(state, 1, { reply_message_id: '14' });
+    expect(state.replyMessageId).toBe('14');
+  });
+
+  it('remembers that the user stopped, so the next request carries the reasoning forward', () => {
+    const state = createChatState(0);
+    expect(state.stopped).toBe(false);
+    applyChunk(state, 0, { v: 1, done: true, ok: true, stopped: true });
+    expect(state.stopped).toBe(true);
+    expect(state.status).toBe('done');
+  });
+
+  it('keeps streaming after the ids arrive out of order', () => {
+    const state = createChatState(0);
+    applyChunk(state, 1, { text: '界市' });
+    applyChunk(state, 0, { session_id: 'sess-9', reply_message_id: 7 });
+    applyChunk(state, 2, { text: '天津市' });
+    expect(state.text).toBe('界市天津市');
+    expect(state.replyMessageId).toBe('7');
+  });
+});

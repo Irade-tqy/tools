@@ -12,7 +12,7 @@ const store = new Map<string, string>();
 };
 
 const { SESSION_KEY } = await import('../src/lib/config');
-const { clearSession, loadSession, newSession, saveSession, sessionIsLive, sessionLabel } = await import(
+const { carryForwardPrompt, clearSession, loadSession, newSession, saveSession, sessionIsLive, sessionLabel } = await import(
   '../src/lib/session'
 );
 
@@ -89,6 +89,46 @@ describe('continuing a conversation', () => {
     session.turns.push({ role: 'assistant', content: 'a', thinking: 'x'.repeat(9000), at: 1 });
     saveSession(session);
     expect(loadSession().turns[0]?.thinking).toHaveLength(4000);
+  });
+});
+
+describe('carrying a stopped turn forward', () => {
+  const stopped = {
+    role: 'assistant' as const,
+    content: '北京市\n天津市\n河北省',
+    thinking: '用户要列省级行政区，我应该一个一行。',
+    at: 1,
+    stopped: true,
+  };
+
+  it('hands the reasoning over only after a stop', () => {
+    const prompt = carryForwardPrompt(stopped, '继续');
+    expect(prompt).toContain('用户要列省级行政区');
+    expect(prompt.endsWith('继续')).toBe(true);
+    // The partial answer itself stays upstream (the message is stored truncated), so the prompt
+    // only notes where it stopped rather than repeating the whole thing.
+    expect(prompt).toContain('已经输出到');
+  });
+
+  it('leaves the prompt alone for a normal turn, a missing turn, or no reasoning', () => {
+    expect(carryForwardPrompt({ ...stopped, stopped: false }, '继续')).toBe('继续');
+    expect(carryForwardPrompt({ ...stopped, thinking: '' }, '继续')).toBe('继续');
+    expect(carryForwardPrompt({ ...stopped, role: 'user' }, '继续')).toBe('继续');
+    expect(carryForwardPrompt(undefined, '继续')).toBe('继续');
+  });
+
+  it('caps a long reasoning so the next request stays proportionate', () => {
+    const prompt = carryForwardPrompt({ ...stopped, thinking: '想'.repeat(4000) }, '继续');
+    expect(prompt).toContain('已截断');
+    expect(prompt.length).toBeLessThan(1800);
+  });
+
+  it('survives a reload or an import, which is where the flag lives', () => {
+    const session = newSession();
+    session.turns.push({ ...stopped });
+    saveSession(session);
+    expect(loadSession().turns[0]?.stopped).toBe(true);
+    expect(carryForwardPrompt(loadSession().turns[0], '继续')).toContain('用户要列省级行政区');
   });
 });
 

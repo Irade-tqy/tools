@@ -228,7 +228,37 @@ export class DeepSeekWebClient {
       const text = await res.text().catch(() => '');
       throw new DeepSeekWebError(`completion: HTTP ${res.status} ${text.slice(0, 300)}`, res.status, undefined, text);
     }
+    // A refusal comes back as HTTP 200 with a JSON envelope instead of an event stream — e.g.
+    // biz_code 11 "message still wip" when the previous turn was stopped a second ago and
+    // upstream has not finalized it yet. Reading that as a stream produced zero frames and the
+    // user saw "upstream closed without an answer" for a perfectly ordinary retryable state.
+    const contentType = res.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream')) {
+      const text = await res.text().catch(() => '');
+      let json: ApiEnvelope | null = null;
+      try {
+        json = text ? (JSON.parse(text) as ApiEnvelope) : null;
+      } catch {
+        /* fall through to the generic error below */
+      }
+      unwrap(COMPLETION_PATH, res.status, json, text);
+      throw new DeepSeekWebError(`completion: expected an event stream, got ${contentType || 'no content-type'}`, res.status, undefined, text.slice(0, 300));
+    }
     return res;
+  }
+
+  /**
+   * Tell upstream the user stopped. The web app does exactly this (POST /api/v0/chat/stop_stream
+   * {chat_session_id, message_id}) after aborting its own connection, and it matters: without
+   * it upstream keeps generating and stores the *whole* answer, so the next turn is continued
+   * from a message the user never saw. With it the stored message is marked INCOMPLETE and holds
+   * precisely the text that was streamed — verified against /api/v0/chat/history_messages.
+   */
+  async stopStream(chatSessionId: string, messageId: number | string | null): Promise<void> {
+    if (!chatSessionId || messageId === null || messageId === undefined || messageId === '') return;
+    const id = typeof messageId === 'number' ? messageId : Number(messageId);
+    if (!Number.isFinite(id)) return;
+    await this.api('/api/v0/chat/stop_stream', { chat_session_id: chatSessionId, message_id: id });
   }
 
   /** Parse an API response the same way api() does, for the non-JSON-body calls. */

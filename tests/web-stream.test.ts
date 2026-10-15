@@ -32,6 +32,120 @@ function replay(fixture: string) {
   return { state, text, thinking, toolFrames: deltas.length };
 }
 
+/**
+ * An answer reconstructed straight from the fixture's JSON, without the decoder.
+ *
+ * The existing assertions compare the decoder's output against itself (`text === state.text`),
+ * which passes even when a whole patch is dropped. This walks the frames independently — every
+ * fragment registration, every `…/content` patch, every bare `{"v":"…"}` delta — and buckets the
+ * text by fragment type, so a dropped character shows up as a mismatch.
+ */
+function oracleAnswer(fixture: string): string {
+  const raw = readFileSync(new URL(`./fixtures/${fixture}`, import.meta.url), 'utf8');
+  const parse = createWebFrameParser();
+  const types = new Map<number, string>();
+  const order: number[] = [];
+  const buckets = new Map<number, string>();
+  let current: number | null = null;
+
+  const note = (id: number, text: string) => {
+    buckets.set(id, (buckets.get(id) ?? '') + text);
+  };
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) return value.forEach(walk);
+    if (!value || typeof value !== 'object') return;
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.id === 'number' && typeof obj.type === 'string') {
+      const id = obj.id;
+      if (!types.has(id)) {
+        types.set(id, obj.type);
+        order.push(id);
+      } else types.set(id, obj.type);
+      current = id;
+      if (typeof obj.content === 'string') note(id, obj.content);
+    }
+    for (const key of Object.keys(obj)) walk(obj[key]);
+  };
+
+  for (const frame of [...parse(raw), ...parse.flush()]) {
+    let obj: unknown;
+    try {
+      obj = JSON.parse(frame.data);
+    } catch {
+      continue;
+    }
+    if (typeof obj === 'string') {
+      if (current !== null) note(current, obj);
+      continue;
+    }
+    if (!obj || typeof obj !== 'object') continue;
+    const record = obj as Record<string, unknown>;
+    walk(record.v);
+    if (typeof record.p === 'string' && /content$/.test(record.p) && typeof record.v === 'string') {
+      const op = String(record.o ?? '').toUpperCase();
+      if (current === null) continue;
+      if (op === 'SET' || op === 'REPLACE') buckets.set(current, record.v);
+      else note(current, record.v);
+    } else if (record.p === undefined && typeof record.v === 'string' && current !== null) {
+      note(current, record.v);
+    }
+  }
+
+  return order
+    .filter((id) => ['RESPONSE', 'TEMPLATE_RESPONSE'].includes(types.get(id) ?? ''))
+    .map((id) => buckets.get(id) ?? '')
+    .join('');
+}
+
+describe('every recorded stream is decoded without losing text', () => {
+  for (const fixture of ['stream-plain.txt', 'stream-thinking.txt', 'stream-search.txt', 'stream-backend-err.txt']) {
+    it(`${fixture} matches an independent reconstruction`, () => {
+      const { state } = replay(fixture);
+      const expected = oracleAnswer(fixture);
+      // stream-backend-err never produced an answer, so only the fixtures that do get a
+      // length floor; the equality is the point either way.
+      if (!fixture.includes('backend-err')) expect(expected.length).toBeGreaterThan(4);
+      // A missing `o` on a content patch means APPEND upstream. Reading it as SET made the
+      // decoder drop the answer's first character — "黎曼猜想" came out as "黎猜想".
+      expect(state.text).toBe(expected);
+    });
+  }
+});
+
+describe('content patches with no explicit op', () => {
+  it('appends a delta patch that omits `o`', () => {
+    const state = createWebStreamState();
+    const parse = createWebFrameParser();
+    const wire = [
+      'data: {"v":{"response":{"message_id":2,"fragments":[{"id":3,"type":"RESPONSE","content":"黎"}]}}}',
+      '',
+      'data: {"p":"response/fragments/-1/content","v":"曼"}',
+      '',
+      'data: {"p":"response/fragments/-1/content","o":"APPEND","v":"猜想"}',
+      '',
+      'data: {"v":"断言"}',
+      '',
+      'data: {"p":"response/status","o":"SET","v":"FINISHED"}',
+      '',
+    ].join('\n');
+    for (const frame of [...parse(wire), ...parse.flush()]) applyWebFrame(state, frame);
+    expect(state.text).toBe('黎曼猜想断言');
+  });
+
+  it('still treats an explicit SET as the whole fragment', () => {
+    const state = createWebStreamState();
+    const parse = createWebFrameParser();
+    const wire = [
+      'data: {"v":{"response":{"fragments":[{"id":3,"type":"RESPONSE","content":"abc"}]}}}',
+      '',
+      'data: {"p":"response/fragments/-1/content","o":"SET","v":"abcdef"}',
+      '',
+    ].join('\n');
+    for (const frame of [...parse(wire), ...parse.flush()]) applyWebFrame(state, frame);
+    expect(state.text).toBe('abcdef');
+  });
+});
+
 describe('recorded plain answer', () => {
   const { state, text, thinking } = replay('stream-plain.txt');
 

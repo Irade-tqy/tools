@@ -24,6 +24,35 @@ export interface ChatTurn {
   parentId?: string | null;
   /** names of the files attached to this turn (the ids live upstream once sent) */
   files?: string[];
+  /** the user pressed Stop while this answer was streaming */
+  stopped?: boolean;
+}
+
+/**
+ * The prompt to send after a stopped turn.
+ *
+ * DeepSeek keeps the conversation itself, and a stopped message is stored truncated (INCOMPLETE),
+ * so the next turn continues from the partial answer automatically. What it does *not* keep is
+ * the reasoning: verified against the live API, a follow-up cannot recall the previous turn's
+ * thinking at all. So the reasoning of a stopped turn is handed over explicitly — the model is
+ * told it is its own unfinished thought, not something the user wrote.
+ */
+export function carryForwardPrompt(turn: ChatTurn | undefined, content: string): string {
+  if (!turn || turn.role !== 'assistant' || !turn.stopped) return content;
+  const thinking = (turn.thinking ?? '').trim();
+  if (!thinking) return content;
+  const CAP = 1200;
+  const body = thinking.length > CAP ? `${thinking.slice(0, CAP)}…（已截断）` : thinking;
+  const said = (turn.content ?? '').trim();
+  const saidPart = said
+    ? `，并且已经输出到：“${said.length > 200 ? `${said.slice(-200)}…` : said}”`
+    : '';
+  return [
+    `（说明：上一轮你的回答${saidPart ? saidPart : ''}，被用户手动打断了。你当时的思考过程如下，请把它当作你自己还没说完的思路接着进行，不要重复它。）`,
+    `<thinking>${body}</thinking>`,
+    '',
+    content,
+  ].join('\n');
 }
 
 export interface ChatSession {
@@ -117,12 +146,16 @@ export function parseSession(raw: string): ChatSession {
     if ((t.role !== 'user' && t.role !== 'assistant') || typeof t.content !== 'string'
       || typeof t.at !== 'number' || !Number.isFinite(t.at)
       || (t.thinking !== undefined && typeof t.thinking !== 'string')
+      || (t.stopped !== undefined && typeof t.stopped !== 'boolean')
       || (t.parentId !== undefined && t.parentId !== null && typeof t.parentId !== 'string')) {
       throw new Error('会话包含无效消息。');
     }
-    // Only import display text and continuation ids, never arbitrary object properties.
+    // Only import display text and continuation ids, never arbitrary object properties. `stopped`
+    // is on the list because the next turn's prompt depends on it: without it a reloaded or
+    // imported session forgets that the reasoning has to be handed over by hand.
     return { role: t.role, content: t.content, at: t.at,
-      thinking: t.thinking as string | undefined, parentId: t.parentId as string | null | undefined };
+      thinking: t.thinking as string | undefined, parentId: t.parentId as string | null | undefined,
+      stopped: t.stopped as boolean | undefined };
   });
   return { localId: newLocalId(), title: s.title, startedAt: s.startedAt,
     dsSessionId: s.dsSessionId as string | null, parentId: s.parentId as string | null, turns };

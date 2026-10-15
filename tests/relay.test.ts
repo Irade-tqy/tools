@@ -23,6 +23,8 @@ const webTool = {
 
 const credential = { token: 't', deviceId: '', cookie: '', userAgent: 'UA', source: 'test' } as never;
 
+const SESSION_ID = '11111111-2222-3333-4444-555555555555';
+
 describe('outboundTool', () => {
   it('caps the result pool and the snippet so a deep search stays light', () => {
     const out = outboundTool(webTool as never);
@@ -32,20 +34,34 @@ describe('outboundTool', () => {
   });
 });
 
+/**
+ * The sink writes a batch with deepseek_append_many and falls back to one deepseek_append per
+ * chunk when that fails, so a test has to read seqs out of either shape.
+ */
+function seqsOf(args: Record<string, unknown>): number[] {
+  const chunks = args.p_chunks;
+  if (Array.isArray(chunks)) return (chunks as { seq: number }[]).map((c) => c.seq);
+  return [args.p_seq as number];
+}
+
 describe('ChunkSink', () => {
-  it('writes every chunk once, in seq order', async () => {
+  it('writes a batch in one round-trip, in seq order', async () => {
     const calls: Call[] = [];
     const sink = new ChunkSink('job-1', async (fn, args) => {
       calls.push({ fn, args: (args ?? {}) as Call['args'] });
-      return { ok: true, seq: args?.p_seq };
+      return { ok: true };
     });
     sink.push({ v: 1, _transport: 'worker-web', text: 'a' });
     sink.push({ v: 1, _transport: 'worker-web', text: 'b' });
     sink.stopTimer();
     await sink.flush();
 
-    expect(calls.map((c) => c.args.p_seq)).toEqual([0, 1]);
-    expect(calls.every((c) => c.fn === 'deepseek_append')).toBe(true);
+    // The reason append_many exists: DeepSeek streams roughly one character per patch, so an
+    // 82-token answer became 101 chunks and 101 HTTPS round-trips. A 2.0 s upstream answer then
+    // took 35.7 s to reach the database — the visible "2 tokens/s".
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.fn).toBe('deepseek_append_many');
+    expect(seqsOf(calls[0]!.args)).toEqual([0, 1]);
   });
 
   it('never strands the tail when a flush is already in flight', async () => {
@@ -55,7 +71,7 @@ describe('ChunkSink', () => {
     let release: () => void = () => {};
     const written: number[] = [];
     const sink = new ChunkSink('job-2', async (_fn, args) => {
-      written.push(args?.p_seq as number);
+      written.push(...seqsOf((args ?? {}) as Record<string, unknown>));
       if (written.length === 1) await new Promise<void>((resolve) => (release = resolve));
       return { ok: true };
     });
@@ -67,30 +83,36 @@ describe('ChunkSink', () => {
     release();
     await Promise.all([first, second]);
 
-    expect(written).toEqual([0, 1]);
+    expect(written.sort((a, b) => a - b)).toEqual([0, 1]);
   });
 
   it('stops writing once the server says the job is over', async () => {
-    const written: number[] = [];
+    const attempted: number[] = [];
     const sink = new ChunkSink('job-3', async (_fn, args) => {
-      written.push(args?.p_seq as number);
-      return written.length === 1 ? { ok: false, error: 'job_cancelled' } : { ok: true };
+      const seqs = seqsOf((args ?? {}) as Record<string, unknown>);
+      attempted.push(...seqs);
+      return attempted.length >= 2 ? { ok: false, error: 'job_cancelled' } : { ok: true };
     });
     sink.push({ v: 1, _transport: 'worker-web', text: 'a' });
     sink.push({ v: 1, _transport: 'worker-web', text: 'b' });
     sink.stopTimer();
     await sink.flush();
 
-    expect(written).toEqual([0]);
+    expect(attempted).toEqual([0, 1]);
     expect(sink.cancelled).toBe(true);
   });
 
-  it('loses one chunk, not the batch, when an append throws', async () => {
+  it('falls back to per-chunk writes and loses one chunk, not the batch', async () => {
     // PostgREST behind the local proxy blips; one blip used to discard every later chunk,
     // which is how a 130-chunk answer ended up with 124 rows and no done frame.
     const written: number[] = [];
-    const sink = new ChunkSink('job-4', async (_fn, args) => {
-      const seq = args?.p_seq as number;
+    let batchCalls = 0;
+    const sink = new ChunkSink('job-4', async (fn, args) => {
+      if (fn === 'deepseek_append_many') {
+        batchCalls += 1;
+        throw new Error('socket hang up');
+      }
+      const seq = (args as Record<string, unknown>)?.p_seq as number;
       if (seq === 1) throw new Error('socket hang up');
       written.push(seq);
       return { ok: true };
@@ -99,19 +121,19 @@ describe('ChunkSink', () => {
     sink.stopTimer();
     await sink.flush();
 
+    expect(batchCalls).toBeGreaterThan(0);
     expect(written).toEqual([0, 2, 3, 4]);
     expect(sink.stopReason).toContain('seq 1');
     expect(sink.cancelled).toBe(false);
   });
 
   it('retries a transient failure instead of dropping the chunk', async () => {
-    const attempts: number[] = [];
+    let attempts = 0;
     const written: number[] = [];
     const sink = new ChunkSink('job-5', async (_fn, args) => {
-      const seq = args?.p_seq as number;
-      attempts.push(seq);
-      if (seq === 0 && attempts.filter((s) => s === 0).length < 3) return { ok: false, error: 'http_503' };
-      written.push(seq);
+      attempts += 1;
+      if (attempts < 3) return { ok: false, error: 'http_503' };
+      written.push(...seqsOf((args ?? {}) as Record<string, unknown>));
       return { ok: true };
     });
     sink.push({ v: 1, _transport: 'worker-web', text: 'a' });
@@ -119,8 +141,8 @@ describe('ChunkSink', () => {
     sink.stopTimer();
     await sink.flush();
 
-    expect(written).toEqual([0, 1]);
-    expect(attempts.filter((s) => s === 0)).toHaveLength(3);
+    expect(written.sort((a, b) => a - b)).toEqual([0, 1]);
+    expect(attempts).toBe(3);
     expect(sink.stopReason).toBeNull();
   });
 
@@ -129,26 +151,26 @@ describe('ChunkSink', () => {
     // already 'done' and the server rejects the late chunks with job_done — tail lost.
     const written: number[] = [];
     let release: () => void = () => {};
+    let parked = false;
     const sink = new ChunkSink('job-6', async (_fn, args) => {
-      const seq = args?.p_seq as number;
-      if (seq === 0) await new Promise<void>((resolve) => (release = resolve));
-      written.push(seq);
+      if (!parked) {
+        parked = true;
+        await new Promise<void>((resolve) => (release = resolve));
+      }
+      written.push(...seqsOf((args ?? {}) as Record<string, unknown>));
       return { ok: true };
     });
     for (let i = 0; i < 8; i += 1) sink.push({ v: 1, _transport: 'worker-web', text: `${i}` });
-    // the 8th push started a write that is parked on seq 0; a second flush joins it
+    const started = sink.flush();
+    sink.push({ v: 1, _transport: 'worker-web', done: true });
     const joined = sink.flush();
     release();
-    await joined;
-    sink.push({ v: 1, _transport: 'worker-web', done: true });
-    sink.stopTimer();
-    await sink.flush();
+    await Promise.all([started, joined]);
 
     expect(written.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
     expect(sink.inflightCount()).toBe(0);
   });
 });
-
 describe('runRelayTurn', () => {
   it('reports not_claimed without touching the upstream', async () => {
     const calls: Call[] = [];
@@ -314,5 +336,137 @@ describe('runRelayTurn', () => {
     const metrics = (complete?.args.p_metrics ?? {}) as Record<string, unknown>;
     expect(metrics).not.toHaveProperty('upstream_ttft_ms');
     expect(metrics.upstream_total_ms).toBeGreaterThan(0);
+  });
+
+  /** PoW + session stubs, the completion answer the test asks for, and a record of what we called. */
+  function stubUpstream(raw: string, completion: () => Response = () => new Response(raw, { status: 200, headers: { 'content-type': 'text/event-stream' } })) {
+    const upstream: { url: string; body: unknown }[] = [];
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      upstream.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      const json = (data: unknown) =>
+        new Response(JSON.stringify({ code: 0, msg: '', data: { biz_code: 0, biz_msg: '', biz_data: data } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (url.includes('create_pow_challenge')) {
+        return json({
+          algorithm: 'DeepSeekHashV1',
+          challenge: 'bb3a237ae3a403cbf2a52b8cfeb77111a68748c910c74f2e3f8b878d4ee1af05',
+          salt: '593dd6dda7708462ddd2',
+          signature: '3583e8171942b021b690ecd81d0fc7212323c6e7a31f8a1cbb529ab08f5b9179',
+          difficulty: 144000,
+          expire_at: 1791975536431,
+        });
+      }
+      if (url.includes('chat_session/create')) return json({ chat_session: { id: SESSION_ID } });
+      if (url.includes('chat/completion')) return completion();
+      if (url.includes('chat/stop_stream')) return json(null);
+      throw new Error(`unexpected upstream call ${url}`);
+    }) as unknown as typeof fetch;
+    return { fetchImpl, upstream };
+  }
+
+  const claimRpc = async (calls: Call[], fn: string, args: Record<string, unknown>) => {
+    calls.push({ fn, args });
+    if (fn === 'deepseek_claim') {
+      return { ok: true, claimed: true, job_id: 'job-1', prompt: '什么是幂等性？', session_id: SESSION_ID, parent_message_id: null, model_type: 'default' };
+    }
+    return { ok: true };
+  };
+
+  it('announces the conversation ids as soon as upstream names the message', async () => {
+    // deepseek_complete only writes the ids when the transport finishes, and a Stop marks the job
+    // cancelled the instant the RPC runs. If the ids arrive no earlier than that, the client
+    // commits without them and the next message continues from the turn *before* this one.
+    const raw = readFileSync(new URL('./fixtures/stream-plain.txt', import.meta.url), 'utf8');
+    const { fetchImpl } = stubUpstream(raw);
+    const calls: Call[] = [];
+    const payloads: RelayPayload[] = [];
+
+    await runRelayTurn(
+      {
+        rpc: async (fn, args) => claimRpc(calls, fn, (args ?? {}) as Record<string, unknown>),
+        credential,
+        workerId: 'w',
+        origin: 'test',
+        transport: 'worker-web',
+        fetchImpl,
+        emit: (payload) => payloads.push(payload),
+      },
+      { jobId: 'job-1', prompt: '什么是幂等性？' },
+    );
+
+    const announced = payloads.filter((p) => p.reply_message_id !== undefined && !p.done);
+    expect(announced).toHaveLength(1);
+    expect(announced[0]?.session_id).toBe(SESSION_ID);
+    expect(announced[0]?.reply_message_id).toBe(2);
+    // …and it precedes the answer, which is the whole point.
+    expect(payloads.findIndex((p) => p.reply_message_id !== undefined)).toBeLessThan(
+      payloads.findIndex((p) => p.text),
+    );
+  });
+
+  it('tells upstream the user stopped so the next turn continues from the partial answer', async () => {
+    // Verified against /api/v0/chat/history_messages: aborting the connection alone leaves the
+    // stored message FINISHED with the *whole* answer, so the follow-up is continued from text
+    // the user never saw. POST /api/v0/chat/stop_stream is what truncates it to INCOMPLETE.
+    const raw = readFileSync(new URL('./fixtures/stream-plain.txt', import.meta.url), 'utf8');
+    const { fetchImpl, upstream } = stubUpstream(raw);
+    const calls: Call[] = [];
+    const payloads: RelayPayload[] = [];
+    let frames = 0;
+
+    const result = await runRelayTurn(
+      {
+        rpc: async (fn, args) => claimRpc(calls, fn, (args ?? {}) as Record<string, unknown>),
+        credential,
+        workerId: 'w',
+        origin: 'test',
+        transport: 'worker-web',
+        fetchImpl,
+        emit: (payload) => payloads.push(payload),
+        shouldAbort: () => (frames += 1) > 3,
+      },
+      { jobId: 'job-1', prompt: '什么是幂等性？' },
+    );
+
+    const stopped = upstream.filter((c) => c.url.includes('chat/stop_stream'));
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]?.body).toEqual({ chat_session_id: SESSION_ID, message_id: 2 });
+    const done = payloads.at(-1);
+    expect(done?.done).toBe(true);
+    expect(done?.stopped).toBe(true);
+    // A stop is not a failure: "upstream closed without an answer" would say it was.
+    expect(result.ok).toBe(true);
+    expect(done?.error).toBeFalsy();
+    expect(done?.reply_message_id).toBe(2);
+  });
+
+  it('retries a completion upstream refuses because the last message is still WIP', async () => {
+    // Live behaviour after a Stop: completion answers HTTP 200 with a JSON envelope, not a
+    // stream — biz_code 11 "message still wip" — for the few seconds until the stopped message
+    // settles. Read as a stream that is zero frames, and the user sees a bogus failure.
+    const raw = readFileSync(new URL('./fixtures/stream-plain.txt', import.meta.url), 'utf8');
+    let attempts = 0;
+    const { fetchImpl } = stubUpstream(raw, () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response(JSON.stringify({ code: 0, msg: '', data: { biz_code: 11, biz_msg: 'message still wip', biz_data: null } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(raw, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+    const calls: Call[] = [];
+
+    const result = await runRelayTurn(
+      { rpc: async (fn, args) => claimRpc(calls, fn, (args ?? {}) as Record<string, unknown>), credential, workerId: 'w', origin: 'test', transport: 'worker-web', fetchImpl },
+      { jobId: 'job-1', prompt: '什么是幂等性？' },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.ok).toBe(true);
   });
 });

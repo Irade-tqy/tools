@@ -44,6 +44,8 @@ export interface ChunkPayload {
   tool?: ToolPayload;
   done?: boolean;
   ok?: boolean;
+  /** the transport stopped this turn because the user pressed Stop */
+  stopped?: boolean;
   session_id?: string | null;
   reply_message_id?: number | string | null;
   title?: string;
@@ -79,6 +81,8 @@ export interface ChatState {
   citations: ChatCitation[];
   sessionId: string | null;
   replyMessageId: string | null;
+  /** true when the user stopped this turn — the next one has to carry the reasoning forward */
+  stopped: boolean;
   title: string;
   mode: string;
   searchTriggered: boolean;
@@ -110,6 +114,7 @@ export function createChatState(startedAt = Date.now()): ChatState {
     citations: [],
     sessionId: null,
     replyMessageId: null,
+    stopped: false,
     title: '',
     mode: '',
     searchTriggered: false,
@@ -198,6 +203,16 @@ function applyPayload(state: ChatState, seq: number, payload: ChunkPayload, now:
   if (seq > state.lastSeq) state.lastSeq = seq;
 
   if (payload?._transport) state.transport = payload._transport;
+
+  // The relay announces the upstream ids as soon as its `ready` frame arrives, not only in the
+  // done chunk. A turn the user stops, or a page that reloads mid-answer, still needs them: the
+  // next message continues from the stopped message, and without them it silently continues
+  // from the one before it — which is how a Stop used to drop the context.
+  if (payload?.session_id) state.sessionId = String(payload.session_id);
+  if (payload?.reply_message_id !== undefined && payload?.reply_message_id !== null) {
+    state.replyMessageId = String(payload.reply_message_id);
+  }
+  if (payload?.stopped) state.stopped = true;
 
   if (payload?.thinking) state.reasoning += payload.thinking;
 
