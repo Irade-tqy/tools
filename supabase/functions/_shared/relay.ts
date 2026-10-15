@@ -380,7 +380,11 @@ export async function runRelayTurn(deps: RelayDeps, turn: RelayTurn): Promise<Re
   const written = sink.seq - sink.queueLength() - sink.inflightCount();
 
   const metrics = {
-    upstream_ttft_ms: upstreamTtftMs ?? 0,
+    // A turn that never produced an answer has no time-to-first-token. Writing 0 there lies to
+    // the operator and drags the median the public status strip shows toward zero — during
+    // DeepSeek's own "服务器暂时不可用" outage every failed turn wrote 0 and the site reported
+    // 中位首字 0ms (0008 strips the stale rows and makes the median ignore them).
+    ...(upstreamTtftMs === null || upstreamTtftMs === undefined ? {} : { upstream_ttft_ms: upstreamTtftMs }),
     upstream_total_ms: finishedAt - startedAt,
     pow_and_connect_ms: powMs ?? 0,
     chunks: sink.seq,

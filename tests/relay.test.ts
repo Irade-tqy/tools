@@ -258,6 +258,61 @@ describe('runRelayTurn', () => {
     expect(complete?.args.p_reply_message_id).toBe(2);
     expect(complete?.args.p_title).toBe('幂等性定义');
     expect(complete?.args.p_ok).toBe(true);
-    expect((complete?.args.p_metrics as Record<string, number>).upstream_ttft_ms).toBeGreaterThanOrEqual(0);
+    expect((complete?.args.p_metrics as Record<string, number>).upstream_ttft_ms).toBeGreaterThan(0);
+  });
+
+  it('records no time-to-first-token when the upstream never answered', async () => {
+    // Captured during DeepSeek's own outage: a hint frame says 服务器暂时不可用 and the stream
+    // closes. The turn must report that reason, and must not write upstream_ttft_ms = 0 — that
+    // zero is what made the public status strip read 「中位首字 0ms」 (migration 0008).
+    const raw = readFileSync(new URL('./fixtures/stream-backend-err.txt', import.meta.url), 'utf8');
+    const calls: Call[] = [];
+
+    const fetchImpl = (async (input: unknown) => {
+      const url = String(input);
+      const json = (data: unknown) =>
+        new Response(JSON.stringify({ code: 0, msg: '', data: { biz_code: 0, biz_msg: '', biz_data: data } }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (url.includes('create_pow_challenge')) {
+        return json({
+          algorithm: 'DeepSeekHashV1',
+          challenge: 'bb3a237ae3a403cbf2a52b8cfeb77111a68748c910c74f2e3f8b878d4ee1af05',
+          salt: '593dd6dda7708462ddd2',
+          signature: '3583e8171942b021b690ecd81d0fc7212323c6e7a31f8a1cbb529ab08f5b9179',
+          difficulty: 144000,
+          expire_at: 1791975536431,
+        });
+      }
+      if (url.includes('chat_session/create')) return json({ chat_session: { id: '11111111-2222-3333-4444-555555555555' } });
+      if (url.includes('chat/completion')) return new Response(raw, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+      throw new Error(`unexpected upstream call ${url}`);
+    }) as unknown as typeof fetch;
+
+    const result = await runRelayTurn(
+      {
+        rpc: async (fn, args) => {
+          calls.push({ fn, args: (args ?? {}) as Call['args'] });
+          if (fn === 'deepseek_claim') {
+            return { ok: true, claimed: true, job_id: 'job-9', prompt: '天气', session_id: null, parent_message_id: null, model_type: 'default' };
+          }
+          return { ok: true };
+        },
+        credential,
+        workerId: 'w',
+        origin: 'test',
+        transport: 'worker-web',
+        fetchImpl,
+      },
+      { jobId: 'job-9', prompt: '天气' },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(String(result.error)).toContain('服务器暂时不可用');
+    const complete = calls.find((c) => c.fn === 'deepseek_complete');
+    const metrics = (complete?.args.p_metrics ?? {}) as Record<string, unknown>;
+    expect(metrics).not.toHaveProperty('upstream_ttft_ms');
+    expect(metrics.upstream_total_ms).toBeGreaterThan(0);
   });
 });
