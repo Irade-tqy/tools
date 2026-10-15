@@ -166,7 +166,7 @@ try {
   });
 
   // Precedence check first: a hash override must beat the baked-in defaults.
-  await page.goto(`${origin}index.html#supabase=https%3A%2F%2Fbogus.supabase.co&anon=short`, {
+  await page.goto(`${origin}#supabase=https%3A%2F%2Fbogus.supabase.co&anon=short`, {
     waitUntil: 'load',
   });
   await page.waitForTimeout(600);
@@ -179,7 +179,7 @@ try {
   );
 
   // The real run uses the defaults committed in src/lib/defaults.ts — no setup, no hash.
-  await page.goto(`${origin}index.html`, { waitUntil: 'load' });
+  await page.goto(`${origin}`, { waitUntil: 'load' });
 
   check('the app loads without page errors or failing requests', pageErrors.length === 0 && httpErrors.length === 0, [...pageErrors, ...httpErrors].join('\n'));
   check('works with the baked-in defaults (no setup screen)', await page.isVisible('#clipboard-gate'));
@@ -385,7 +385,7 @@ try {
 
   // --- backend page stays hidden until ?admin=1
   check('the backend tab is hidden in the public site', !(await page.isVisible('.tab[data-view=admin]')), await page.textContent('.tabs'));
-  await page.goto(`${origin}index.html?admin=1`, { waitUntil: 'load' });
+  await page.goto(`${origin}?admin=1`, { waitUntil: 'load' });
   await page.waitForSelector('.tab[data-view=admin]:not([hidden])', { timeout: 10_000 });
   check('?admin=1 reveals the backend tab', true);
   await page.click('.tab[data-view=admin]');
@@ -439,7 +439,7 @@ try {
     check('the live credential is restored after the run', restored.body?.token === credSnapshot.body.token, restored.body?.token?.slice(0, 8));
   }
 
-  await page.goto(`${origin}index.html`, { waitUntil: 'load' });
+  await page.goto(`${origin}`, { waitUntil: 'load' });
   await page.waitForSelector('#clipboard-gate', { timeout: 10_000 });
 
   // --- reload: the remembered token restores the session
