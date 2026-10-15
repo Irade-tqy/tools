@@ -1,0 +1,9 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: hint
+data: {"type":"error","content":"服务器暂时不可用","clear_response":true,"finish_reason":"backend_err"}
+
+event: close
+data: {"click_behavior":"retry","auto_resume":false}
+

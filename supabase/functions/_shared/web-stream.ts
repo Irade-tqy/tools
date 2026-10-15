@@ -411,6 +411,20 @@ export function applyWebFrame(
     state.failed = str(obj.msg) || str(obj.message) || JSON.stringify(obj).slice(0, 300);
     return;
   }
+  if (frame.event === 'hint') {
+    // DeepSeek reports degradation out of band: instead of an SSE error frame it sends
+    //   event: hint  data: {"type":"error","content":"服务器暂时不可用","clear_response":true,
+    //                "finish_reason":"backend_err"}
+    // and then closes. Ignoring hints turned a real upstream outage into "upstream closed
+    // without an answer", which tells the user nothing and hides that retrying is the fix.
+    if (str(obj.type) === 'error') {
+      const content = str(obj.content) || 'DeepSeek 返回错误';
+      const reason = str(obj.finish_reason);
+      state.failed = `${content}${reason ? `（${reason}）` : ''}`.slice(0, 300);
+      state.finished = true;
+    }
+    return;
+  }
 
   const code = obj.code;
   if (code !== undefined && code !== 0 && code !== '0') {

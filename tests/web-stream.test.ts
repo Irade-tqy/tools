@@ -208,3 +208,19 @@ describe('fragment routing', () => {
     expect(state.finished).toBe(true);
   });
 });
+
+describe('recorded upstream degradation (captured live)', () => {
+  // DeepSeek was briefly unavailable and answered with a hint frame instead of an error frame.
+  // The relay must report what the upstream said, not "upstream closed without an answer".
+  const { state, text } = replay('stream-backend-err.txt');
+
+  it('keeps the upstream reason and its finish reason', () => {
+    expect(state.failed).toContain('服务器暂时不可用');
+    expect(state.failed).toContain('backend_err');
+  });
+
+  it('treats the turn as finished so no generic fallback fires', () => {
+    expect(state.finished).toBe(true);
+    expect(text).toBe('');
+  });
+});
